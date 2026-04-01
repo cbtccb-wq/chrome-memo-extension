@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Quick Memo",
+  "version": "2.0.0",
+  "description": "新しいタブをメモ帳に。テキスト・画像を自由に貼り付けて自動保存。",
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Quick Memo を開く"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

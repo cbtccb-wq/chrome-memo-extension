@@ -1,0 +1,209 @@
+/* =====================
+   リセット・変数
+======================== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #ffffff;
+  --bg-tool:      #f8f8f8;
+  --bg-editor:    #ffffff;
+  --text:         #1a1a1a;
+  --text-muted:   #999999;
+  --border:       #e4e4e4;
+  --accent:       #4a90d9;
+  --accent-light: rgba(74,144,217,0.12);
+  --danger:       #e05252;
+  --radius:       6px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+          "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:           #141414;
+    --bg-tool:      #1e1e1e;
+    --bg-editor:    #141414;
+    --text:         #e2e2e2;
+    --text-muted:   #666666;
+    --border:       #2e2e2e;
+    --accent:       #5ba3e8;
+    --accent-light: rgba(91,163,232,0.12);
+    --danger:       #e06060;
+  }
+}
+
+/* =====================
+   レイアウト
+======================== */
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* =====================
+   ツールバー
+======================== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  background: var(--bg-tool);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logo {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--text);
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* =====================
+   ボタン
+======================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.btn:active { transform: scale(0.97); }
+
+.btn-secondary:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-danger {
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* =====================
+   エディタ
+======================== */
+.editor-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px 0;
+}
+
+.editor {
+  max-width: 800px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+  outline: none;
+  line-height: 1.8;
+  font-size: 15px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* プレースホルダー */
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* 画像スタイル */
+.editor img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 12px 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.editor img.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.editor img:hover:not(.selected) {
+  border-color: var(--border);
+}
+
+/* =====================
+   ドロップオーバーレイ
+======================== */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(74, 144, 217, 0.15);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  border: 3px dashed var(--accent);
+}
+
+.drop-overlay[hidden] { display: none; }
+
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* =====================
+   フッター
+======================== */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 24px;
+  background: var(--bg-tool);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.info, .save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.save-status.saving { color: var(--accent); }
+.save-status.saved  { color: #5cb85c; }

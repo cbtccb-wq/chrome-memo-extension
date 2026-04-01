@@ -1,0 +1,184 @@
+/* =====================
+   リセット・基本設定
+======================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --text: #1a1a1a;
+  --text-muted: #888888;
+  --border: #e0e0e0;
+  --accent: #4a90d9;
+  --accent-hover: #357abd;
+  --danger: #e05252;
+  --danger-hover: #c43c3c;
+  --shadow: 0 1px 3px rgba(0,0,0,0.1);
+  --radius: 6px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+          "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --bg-secondary: #2a2a2a;
+    --text: #e8e8e8;
+    --text-muted: #888888;
+    --border: #3a3a3a;
+    --accent: #5ba3e8;
+    --accent-hover: #4a90d9;
+    --danger: #e06060;
+    --danger-hover: #c84848;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+}
+
+/* =====================
+   レイアウト
+======================== */
+body {
+  width: 400px;
+  height: 500px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  gap: 8px;
+}
+
+/* =====================
+   ヘッダー
+======================== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* =====================
+   ボタン
+======================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-secondary {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--border);
+}
+
+.btn-danger {
+  background: var(--bg-secondary);
+  color: var(--danger);
+  border: 1px solid var(--border);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+/* =====================
+   テキストエリア
+======================== */
+.memo-area {
+  flex: 1;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.memo-area:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.15);
+}
+
+.memo-area::placeholder {
+  color: var(--text-muted);
+}
+
+/* =====================
+   フッター
+======================== */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.char-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: color 0.3s;
+}
+
+.save-status.saving {
+  color: var(--accent);
+}
+
+.save-status.saved {
+  color: #5cb85c;
+}

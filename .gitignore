@@ -1,0 +1,9 @@
+# Node.js
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 開発用スクリプト（アイコン生成済みなので除外しない）
+# generate-icons.js は残す
