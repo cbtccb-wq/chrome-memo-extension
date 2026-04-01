@@ -1,277 +1,538 @@
 'use strict';
 
-// ── 設定 ───────────────────────────────────────────────────────
-const DB_NAME       = 'QuickMemoDB';
-const DB_VERSION    = 1;
-const STORE_NAME    = 'memo';
-const MAX_IMG_BYTES = 5 * 1024 * 1024; // 5MB / 枚
-const SAVE_DELAY_MS = 400;
+// ── 設定 ───────────────────────────────────────────────────────────
+const DB_NAME    = 'QuickMemoDB';
+const DB_VERSION = 3;             // キャンバスモードへ移行
+const STORE      = 'canvas';
+const MAX_IMG    = 5 * 1024 * 1024;
+const SAVE_DELAY = 600;
+const MIN_W      = 80;
+const MIN_H      = 36;
+const HANDLES    = ['nw','n','ne','e','se','s','sw','w'];
 
-// ── DOM ────────────────────────────────────────────────────────
-const editor      = document.getElementById('editor');
-const dropOverlay = document.getElementById('drop-overlay');
-const infoText    = document.getElementById('info-text');
-const saveStatus  = document.getElementById('save-status');
+// ── DOM refs ──────────────────────────────────────────────────────
+const canvasEl      = document.getElementById('canvas');
+const dropOverlay   = document.getElementById('drop-overlay');
+const infoEl        = document.getElementById('info');
+const saveEl        = document.getElementById('save-status');
 const btnExportTxt  = document.getElementById('btn-export-txt');
 const btnExportHtml = document.getElementById('btn-export-html');
 const btnClear      = document.getElementById('btn-clear');
 
-// ── IndexedDB ─────────────────────────────────────────────────
+// ── アプリ状態 ────────────────────────────────────────────────────
+let elements   = [];       // [{id, type, x, y, w, h, content}]
+let domMap     = new Map();// id → DOM要素
+let selectedId = null;
+let editingId  = null;
 let db;
+let zCounter   = 10;       // z-index管理
 
+// ドラッグ状態
+let dragState  = null;
+// { id, startMX, startMY, startEX, startEY, hasMoved }
+
+// リサイズ状態
+let resizeState = null;
+// { id, handle, startMX, startMY, startX, startY, startW, startH }
+
+// ── ユーティリティ ────────────────────────────────────────────────
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function getElem(id) {
+  return elements.find(e => e.id === id);
+}
+
+// ── IndexedDB ─────────────────────────────────────────────────────
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      e.target.result.createObjectStore(STORE_NAME);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) {
+        d.createObjectStore(STORE);
+      }
     };
-    req.onsuccess = (e) => resolve(e.target.result);
-    req.onerror   = (e) => reject(e.target.error);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
   });
 }
 
-function dbSave(html) {
+function dbSave(data) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(html, 'main');
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(JSON.stringify(data), 'main');
     tx.oncomplete = resolve;
-    tx.onerror    = (e) => reject(e.target.error);
+    tx.onerror    = e => reject(e.target.error);
   });
 }
 
 function dbLoad() {
   return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get('main');
-    req.onsuccess = (e) => resolve(e.target.result || '');
-    req.onerror   = (e) => reject(e.target.error);
+    const tx  = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get('main');
+    req.onsuccess = e => {
+      try { resolve(JSON.parse(e.target.result || '[]')); }
+      catch { resolve([]); }
+    };
+    req.onerror = e => reject(e.target.error);
   });
 }
 
-// ── 自動保存 ──────────────────────────────────────────────────
+// ── 自動保存 ──────────────────────────────────────────────────────
 let saveTimer = null;
 
 function scheduleSave() {
-  setSaveStatus('saving', '保存中...');
+  setStatus('saving', '保存中...');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      await dbSave(editor.innerHTML);
-      setSaveStatus('saved', '保存済み');
-      setTimeout(() => setSaveStatus('', '保存済み'), 2000);
-      updateInfo();
-    } catch (e) {
-      setSaveStatus('', 'エラー: 保存できませんでした');
-      console.error(e);
+      await dbSave(elements);
+      setStatus('saved', '保存済み');
+      setTimeout(() => setStatus('', '保存済み'), 2000);
+    } catch(err) {
+      setStatus('', 'エラー: 保存失敗');
+      console.error(err);
     }
-  }, SAVE_DELAY_MS);
+  }, SAVE_DELAY);
 }
 
-// ── 起動時読み込み ────────────────────────────────────────────
+// ── 起動時読み込み ────────────────────────────────────────────────
 (async () => {
   db = await openDB();
-  const html = await dbLoad();
-  if (html) {
-    editor.innerHTML = html;
-    // 読み込んだ画像にクリック選択を付与
-    editor.querySelectorAll('img').forEach(attachImageClick);
+  const saved = await dbLoad();
+  if (Array.isArray(saved)) {
+    elements = saved;
+    elements.forEach(e => mountDOM(e));
   }
   updateInfo();
-  editor.focus();
 })();
 
-// ── エディタ入力検知 ──────────────────────────────────────────
-editor.addEventListener('input', scheduleSave);
+// ── DOM構築 ──────────────────────────────────────────────────────
+function buildElement(elem) {
+  const div = document.createElement('div');
+  div.className = `memo-el memo-${elem.type}`;
+  div.dataset.id = elem.id;
+  applyPosStyle(div, elem);
 
-// ── 画像クリック選択 ──────────────────────────────────────────
-function attachImageClick(img) {
-  img.addEventListener('click', (e) => {
-    e.stopPropagation();
-    // 他の選択を解除
-    editor.querySelectorAll('img.selected').forEach(i => i.classList.remove('selected'));
-    img.classList.add('selected');
-  });
+  if (elem.type === 'text') {
+    const inner = document.createElement('div');
+    inner.className = 'el-content';
+    inner.contentEditable = 'false';
+    inner.textContent = elem.content || '';
+    div.appendChild(inner);
+
+    // テキスト変更を即時データに反映
+    inner.addEventListener('input', () => {
+      const e = getElem(elem.id);
+      if (e) { e.content = inner.textContent; scheduleSave(); }
+    });
+  } else {
+    const img = document.createElement('img');
+    img.src = elem.content;
+    img.draggable = false;
+    div.appendChild(img);
+  }
+
+  // リサイズハンドル（8方向）
+  for (const h of HANDLES) {
+    const rh = document.createElement('div');
+    rh.className = `rh rh-${h}`;
+    rh.dataset.handle = h;
+    div.appendChild(rh);
+  }
+
+  return div;
 }
 
-// 編集エリア外クリックで選択解除
-document.addEventListener('click', (e) => {
-  if (!editor.contains(e.target)) {
-    editor.querySelectorAll('img.selected').forEach(i => i.classList.remove('selected'));
-  }
-});
+function mountDOM(elem) {
+  const div = buildElement(elem);
+  canvasEl.appendChild(div);
+  domMap.set(elem.id, div);
+}
 
-// Delete / Backspace で選択中の画像を削除
-editor.addEventListener('keydown', (e) => {
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    const selected = editor.querySelector('img.selected');
-    if (selected) {
-      e.preventDefault();
-      selected.remove();
+function unmountDOM(id) {
+  domMap.get(id)?.remove();
+  domMap.delete(id);
+}
+
+function applyPosStyle(div, elem) {
+  div.style.left  = elem.x + 'px';
+  div.style.top   = elem.y + 'px';
+  div.style.width = elem.w + 'px';
+  if (elem.type === 'text') {
+    div.style.minHeight = elem.h + 'px';
+    div.style.height    = '';
+  } else {
+    div.style.height    = elem.h + 'px';
+    div.style.minHeight = '';
+  }
+}
+
+function syncDOM(id) {
+  const elem = getElem(id);
+  const div  = domMap.get(id);
+  if (elem && div) applyPosStyle(div, elem);
+}
+
+// ── 要素操作 ──────────────────────────────────────────────────────
+function addElement(type, x, y, w, h, content) {
+  const elem = { id: uid(), type, x, y, w, h, content: content || '' };
+  elements.push(elem);
+  mountDOM(elem);
+  scheduleSave();
+  updateInfo();
+  return elem;
+}
+
+function removeElement(id) {
+  elements = elements.filter(e => e.id !== id);
+  unmountDOM(id);
+  if (selectedId === id) selectedId = null;
+  if (editingId  === id) editingId  = null;
+  scheduleSave();
+  updateInfo();
+}
+
+// ── 選択 ─────────────────────────────────────────────────────────
+function selectEl(id) {
+  if (selectedId === id) return;
+  if (selectedId) {
+    domMap.get(selectedId)?.classList.remove('selected');
+  }
+  selectedId = id;
+  const div = domMap.get(id);
+  if (div) {
+    div.classList.add('selected');
+    div.style.zIndex = ++zCounter;
+  }
+}
+
+function deselectAll() {
+  if (editingId) stopEditing();
+  if (selectedId) {
+    domMap.get(selectedId)?.classList.remove('selected');
+    selectedId = null;
+  }
+}
+
+// ── テキスト編集 ──────────────────────────────────────────────────
+function startEditing(id) {
+  if (editingId === id) return;
+  stopEditing();
+  const div   = domMap.get(id);
+  const inner = div?.querySelector('.el-content');
+  if (!inner) return;
+  editingId = id;
+  inner.contentEditable = 'true';
+  div.classList.add('editing');
+  inner.focus();
+  // カーソルを末尾へ
+  const range = document.createRange();
+  range.selectNodeContents(inner);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function stopEditing() {
+  if (!editingId) return;
+  const div   = domMap.get(editingId);
+  const inner = div?.querySelector('.el-content');
+  if (inner) {
+    inner.contentEditable = 'false';
+    div.classList.remove('editing');
+    const elem = getElem(editingId);
+    if (elem) {
+      elem.content = inner.textContent;
+      elem.h = Math.max(MIN_H, div.offsetHeight);
       scheduleSave();
     }
   }
-});
-
-// ── 画像挿入ユーティリティ ────────────────────────────────────
-function insertImageAtCursor(src) {
-  const img = document.createElement('img');
-  img.src = src;
-  attachImageClick(img);
-
-  // カーソル位置に挿入
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-    const range = sel.getRangeAt(0);
-    range.deleteContents();
-    range.insertNode(img);
-    // カーソルを画像の後ろへ
-    range.setStartAfter(img);
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } else {
-    editor.appendChild(img);
-  }
-  scheduleSave();
+  editingId = null;
 }
 
-// Blob/File → base64 data URI
+// ── マウスイベント ────────────────────────────────────────────────
+canvasEl.addEventListener('mousedown', e => {
+  const rhEl = e.target.closest('.rh');
+  const meEl = e.target.closest('.memo-el');
+
+  // リサイズ開始
+  if (rhEl && meEl) {
+    e.preventDefault();
+    e.stopPropagation();
+    const id   = meEl.dataset.id;
+    const elem = getElem(id);
+    selectEl(id);
+    resizeState = {
+      id,
+      handle: rhEl.dataset.handle,
+      startMX: e.clientX, startMY: e.clientY,
+      startX: elem.x, startY: elem.y,
+      startW: elem.w, startH: elem.h,
+    };
+    return;
+  }
+
+  // ドラッグ開始
+  if (meEl) {
+    if (editingId === meEl.dataset.id) return; // 編集中はドラッグしない
+    e.preventDefault();
+    const id = meEl.dataset.id;
+    selectEl(id);
+    const elem = getElem(id);
+    dragState = {
+      id,
+      startMX: e.clientX, startMY: e.clientY,
+      startEX: elem.x,    startEY: elem.y,
+      hasMoved: false,
+    };
+    return;
+  }
+
+  // キャンバス空白クリック → 選択解除
+  deselectAll();
+});
+
+canvasEl.addEventListener('dblclick', e => {
+  const meEl = e.target.closest('.memo-el');
+
+  // テキスト要素のダブルクリック → 編集モード
+  if (meEl?.classList.contains('memo-text')) {
+    selectEl(meEl.dataset.id);
+    startEditing(meEl.dataset.id);
+    return;
+  }
+
+  // 空白ダブルクリック → テキストボックス新規作成
+  if (!meEl) {
+    const rect = canvasEl.getBoundingClientRect();
+    const x = e.clientX - rect.left - 100;
+    const y = e.clientY - rect.top  - 20;
+    const elem = addElement('text', Math.max(0, x), Math.max(0, y), 200, MIN_H, '');
+    selectEl(elem.id);
+    startEditing(elem.id);
+  }
+});
+
+document.addEventListener('mousemove', e => {
+  if (dragState) {
+    const dx = e.clientX - dragState.startMX;
+    const dy = e.clientY - dragState.startMY;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.hasMoved = true;
+    const elem = getElem(dragState.id);
+    elem.x = Math.max(0, dragState.startEX + dx);
+    elem.y = Math.max(0, dragState.startEY + dy);
+    syncDOM(dragState.id);
+    return;
+  }
+
+  if (resizeState) {
+    const { handle, startMX, startMY, startX, startY, startW, startH } = resizeState;
+    const dx = e.clientX - startMX;
+    const dy = e.clientY - startMY;
+    let x = startX, y = startY, w = startW, h = startH;
+
+    if (handle.includes('e')) { w = Math.max(MIN_W, startW + dx); }
+    if (handle.includes('s')) { h = Math.max(MIN_H, startH + dy); }
+    if (handle.includes('w')) { w = Math.max(MIN_W, startW - dx); x = startX + startW - w; }
+    if (handle.includes('n')) { h = Math.max(MIN_H, startH - dy); y = startY + startH - h; }
+
+    const elem = getElem(resizeState.id);
+    elem.x = x; elem.y = y; elem.w = w; elem.h = h;
+    syncDOM(resizeState.id);
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragState || resizeState) scheduleSave();
+  dragState   = null;
+  resizeState = null;
+});
+
+// ── キーボード ────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  // 編集中は Escape で編集終了のみ
+  if (editingId) {
+    if (e.key === 'Escape') stopEditing();
+    return;
+  }
+
+  if (!selectedId) return;
+
+  // 削除
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    removeElement(selectedId);
+    return;
+  }
+
+  // 矢印キーで微調整
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const elem = getElem(selectedId);
+    if (e.key === 'ArrowUp')    elem.y -= step;
+    if (e.key === 'ArrowDown')  elem.y += step;
+    if (e.key === 'ArrowLeft')  elem.x -= step;
+    if (e.key === 'ArrowRight') elem.x += step;
+    elem.x = Math.max(0, elem.x);
+    elem.y = Math.max(0, elem.y);
+    syncDOM(selectedId);
+    scheduleSave();
+  }
+});
+
+// ── 画像貼り付け（Ctrl+V）────────────────────────────────────────
+document.addEventListener('paste', async e => {
+  if (editingId) return; // テキスト編集中は通常のペーストに任せる
+  const items = [...(e.clipboardData?.items || [])];
+  const imgItem = items.find(i => i.type.startsWith('image/'));
+  if (imgItem) {
+    e.preventDefault();
+    const file = imgItem.getAsFile();
+    if (file) await insertImageFile(file, null, null);
+  }
+});
+
+// ── ドラッグ＆ドロップ ────────────────────────────────────────────
+let dragCounter = 0;
+
+document.addEventListener('dragenter', e => {
+  const hasImg = [...(e.dataTransfer?.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/'));
+  if (hasImg) { e.preventDefault(); dragCounter++; dropOverlay.hidden = false; }
+});
+
+document.addEventListener('dragleave', () => {
+  if (--dragCounter <= 0) { dragCounter = 0; dropOverlay.hidden = true; }
+});
+
+document.addEventListener('dragover', e => e.preventDefault());
+
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.hidden = true;
+  const rect = canvasEl.getBoundingClientRect();
+  const dropX = e.clientX - rect.left;
+  const dropY = e.clientY - rect.top;
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  let offsetX = 0;
+  for (const file of files) {
+    await insertImageFile(file, dropX + offsetX, dropY + offsetX);
+    offsetX += 20; // 複数枚は少しずらして配置
+  }
+});
+
+// ── 画像挿入ユーティリティ ────────────────────────────────────────
 function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload  = (e) => resolve(e.target.result);
+    reader.onload  = e => resolve(e.target.result);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
-// 画像サイズチェック付きで挿入
-async function insertImageFile(file) {
-  if (!file.type.startsWith('image/')) {
-    alert('画像ファイルのみ対応しています。');
-    return;
-  }
-  if (file.size > MAX_IMG_BYTES) {
-    const mb = (file.size / 1024 / 1024).toFixed(1);
-    alert(`画像が大きすぎます（${mb}MB）。\n1枚あたり最大 5MB までです。`);
+async function insertImageFile(file, dropX, dropY) {
+  if (!file.type.startsWith('image/')) { alert('画像ファイルのみ対応しています。'); return; }
+  if (file.size > MAX_IMG) {
+    alert(`1枚最大5MBです（この画像: ${(file.size/1024/1024).toFixed(1)}MB）`);
     return;
   }
   const dataUrl = await fileToDataURL(file);
-  insertImageAtCursor(dataUrl);
+
+  // 自然サイズを取得してから追加
+  const tmpImg = new Image();
+  tmpImg.onload = () => {
+    const maxW = canvasEl.offsetWidth  * 0.45;
+    const maxH = canvasEl.offsetHeight * 0.70;
+    let w = tmpImg.naturalWidth;
+    let h = tmpImg.naturalHeight;
+    // 収まるように縮小
+    if (w > maxW) { h = h * maxW / w; w = maxW; }
+    if (h > maxH) { w = w * maxH / h; h = maxH; }
+    const x = dropX != null ? dropX - w / 2 : canvasEl.offsetWidth  / 2 - w / 2;
+    const y = dropY != null ? dropY - h / 2 : canvasEl.offsetHeight / 2 - h / 2;
+    const elem = addElement('image', Math.max(0, x), Math.max(0, y), Math.round(w), Math.round(h), dataUrl);
+    selectEl(elem.id);
+  };
+  tmpImg.src = dataUrl;
 }
 
-// ── Ctrl+V 貼り付け ───────────────────────────────────────────
-editor.addEventListener('paste', async (e) => {
-  const items = e.clipboardData?.items;
-  if (!items) return;
-
-  // 画像が含まれていれば画像優先で処理
-  for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      e.preventDefault();
-      const file = item.getAsFile();
-      if (file) await insertImageFile(file);
-      return;
-    }
-  }
-
-  // テキストのみの場合: プレーンテキストとして貼り付け（リッチHTMLを除去）
-  for (const item of items) {
-    if (item.type === 'text/plain') {
-      e.preventDefault();
-      const text = e.clipboardData.getData('text/plain');
-      document.execCommand('insertText', false, text);
-      return;
-    }
-  }
-});
-
-// ── ドラッグ＆ドロップ ────────────────────────────────────────
-let dragCounter = 0;
-
-document.addEventListener('dragenter', (e) => {
-  if ([...e.dataTransfer.items].some(i => i.kind === 'file' && i.type.startsWith('image/'))) {
-    e.preventDefault();
-    dragCounter++;
-    dropOverlay.hidden = false;
-  }
-});
-
-document.addEventListener('dragleave', () => {
-  dragCounter--;
-  if (dragCounter <= 0) { dragCounter = 0; dropOverlay.hidden = true; }
-});
-
-document.addEventListener('dragover', (e) => e.preventDefault());
-
-document.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  dragCounter = 0;
-  dropOverlay.hidden = true;
-
-  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
-  for (const file of files) {
-    await insertImageFile(file);
-  }
-});
-
-// ── エクスポート ──────────────────────────────────────────────
-function timestamp() {
-  const n = new Date(), p = (v) => String(v).padStart(2, '0');
-  return `${n.getFullYear()}${p(n.getMonth()+1)}${p(n.getDate())}_${p(n.getHours())}${p(n.getMinutes())}${p(n.getSeconds())}`;
+// ── エクスポート ──────────────────────────────────────────────────
+function ts() {
+  const n = new Date(), p = v => String(v).padStart(2,'0');
+  return `${n.getFullYear()}${p(n.getMonth()+1)}${p(n.getDate())}_${p(n.getHours())}${p(n.getMinutes())}`;
 }
 
-function download(blob, filename) {
+function dl(blob, name) {
   const url = URL.createObjectURL(blob);
-  const a   = Object.assign(document.createElement('a'), { href: url, download: filename });
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
 btnExportTxt.addEventListener('click', () => {
-  const text = editor.innerText.trim();
-  if (!text) { alert('テキストがありません。'); return; }
-  download(new Blob([text], { type: 'text/plain;charset=utf-8' }), `memo_${timestamp()}.txt`);
+  const lines = elements.filter(e => e.type === 'text' && e.content.trim()).map(e => e.content);
+  if (!lines.length) { alert('テキストがありません。'); return; }
+  dl(new Blob([lines.join('\n\n---\n\n')], { type: 'text/plain;charset=utf-8' }), `memo_${ts()}.txt`);
 });
 
 btnExportHtml.addEventListener('click', () => {
-  if (!editor.innerHTML.trim()) { alert('メモが空です。'); return; }
+  if (!elements.length) { alert('メモが空です。'); return; }
+  const body = elements.map(e => {
+    const s = `position:absolute;left:${e.x}px;top:${e.y}px;width:${e.w}px;`;
+    if (e.type === 'text') {
+      return `<div style="${s}min-height:${e.h}px;font-family:sans-serif;font-size:14px;line-height:1.75;white-space:pre-wrap;padding:8px 10px;">${escHtml(e.content)}</div>`;
+    } else {
+      return `<div style="${s}height:${e.h}px;"><img src="${e.content}" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+    }
+  }).join('\n');
+  const maxX = Math.max(...elements.map(e => e.x + e.w), 800);
+  const maxY = Math.max(...elements.map(e => e.y + e.h), 600);
   const html = `<!DOCTYPE html>
-<html lang="ja"><head><meta charset="UTF-8">
-<title>Quick Memo エクスポート</title>
-<style>
-  body { max-width:800px; margin:40px auto; font-family:sans-serif; line-height:1.8; color:#1a1a1a; padding:0 24px; }
-  img  { max-width:100%; border-radius:6px; margin:12px 0; display:block; }
-</style></head>
-<body>${editor.innerHTML}</body></html>`;
-  download(new Blob([html], { type: 'text/html;charset=utf-8' }), `memo_${timestamp()}.html`);
+<html lang="ja"><head><meta charset="UTF-8"><title>Quick Memo エクスポート</title>
+<style>body{margin:0;background:#fff;position:relative;width:${maxX}px;height:${maxY}px;}</style>
+</head><body>${body}</body></html>`;
+  dl(new Blob([html], { type: 'text/html;charset=utf-8' }), `memo_${ts()}.html`);
 });
 
-// ── クリア ─────────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── クリア ────────────────────────────────────────────────────────
 btnClear.addEventListener('click', async () => {
-  if (!editor.innerHTML.trim()) return;
-  if (!confirm('メモをすべて削除しますか？\nテキストも画像も消えます。この操作は元に戻せません。')) return;
-  editor.innerHTML = '';
-  await dbSave('');
-  setSaveStatus('saved', 'クリアしました');
-  setTimeout(() => setSaveStatus('', '保存済み'), 2000);
+  if (!elements.length) return;
+  if (!confirm('すべての要素を削除しますか？\nこの操作は元に戻せません。')) return;
+  elements = [];
+  domMap.forEach(el => el.remove());
+  domMap.clear();
+  selectedId = null;
+  editingId  = null;
+  await dbSave([]);
+  setStatus('saved', 'クリアしました');
+  setTimeout(() => setStatus('', '保存済み'), 2000);
   updateInfo();
 });
 
-// ── ステータス表示 ────────────────────────────────────────────
-function setSaveStatus(cls, text) {
-  saveStatus.className = 'save-status' + (cls ? ` ${cls}` : '');
-  saveStatus.textContent = text;
+// ── ステータス ────────────────────────────────────────────────────
+function setStatus(cls, text) {
+  saveEl.className  = 'save-status' + (cls ? ` ${cls}` : '');
+  saveEl.textContent = text;
 }
 
 function updateInfo() {
-  const chars  = editor.innerText.length;
-  const images = editor.querySelectorAll('img').length;
-  const parts  = [];
-  if (chars  > 0) parts.push(`${chars.toLocaleString()} 文字`);
-  if (images > 0) parts.push(`画像 ${images} 枚`);
-  infoText.textContent = parts.join('　／　');
+  const t = elements.filter(e => e.type === 'text').length;
+  const i = elements.filter(e => e.type === 'image').length;
+  const p = [];
+  if (t) p.push(`テキスト ${t}`);
+  if (i) p.push(`画像 ${i}`);
+  infoEl.textContent = p.join('　/　');
 }
-
-// コンテンツ変化時にも情報更新
-new MutationObserver(updateInfo).observe(editor, { childList: true, subtree: true, characterData: true });

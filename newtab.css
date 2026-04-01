@@ -4,107 +4,110 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:           #ffffff;
-  --bg-tool:      #f8f8f8;
-  --bg-editor:    #ffffff;
-  --text:         #1a1a1a;
-  --text-muted:   #999999;
-  --border:       #e4e4e4;
-  --accent:       #4a90d9;
-  --accent-light: rgba(74,144,217,0.12);
-  --danger:       #e05252;
-  --radius:       6px;
+  --bg:        #f7f7f7;
+  --bg-tool:   #ffffff;
+  --text:      #1a1a1a;
+  --text-muted:#999;
+  --border:    #e0e0e0;
+  --accent:    #4a90d9;
+  --accent-bg: rgba(74,144,217,0.1);
+  --danger:    #e05252;
+  --el-bg:     #ffffff;
+  --el-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  --handle-bg: #ffffff;
+  --grid-dot:  #d8d8d8;
+  --radius:    4px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
           "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:           #141414;
-    --bg-tool:      #1e1e1e;
-    --bg-editor:    #141414;
-    --text:         #e2e2e2;
-    --text-muted:   #666666;
-    --border:       #2e2e2e;
-    --accent:       #5ba3e8;
-    --accent-light: rgba(91,163,232,0.12);
-    --danger:       #e06060;
+    --bg:        #1a1a1a;
+    --bg-tool:   #242424;
+    --text:      #e2e2e2;
+    --text-muted:#666;
+    --border:    #333;
+    --accent:    #5ba3e8;
+    --accent-bg: rgba(91,163,232,0.12);
+    --el-bg:     #2a2a2a;
+    --el-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    --handle-bg: #3a3a3a;
+    --grid-dot:  #2e2e2e;
   }
 }
 
-/* =====================
-   レイアウト
-======================== */
 html, body {
   height: 100%;
+  overflow: hidden;
+  font-family: var(--font);
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
-}
-
-.layout {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
 }
 
 /* =====================
    ツールバー
 ======================== */
 .toolbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 44px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 24px;
+  padding: 0 16px;
+  gap: 12px;
   background: var(--bg-tool);
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  z-index: 1000;
+  user-select: none;
 }
 
 .logo {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.3px;
+  flex-shrink: 0;
   color: var(--text);
+}
+
+.toolbar-center {
+  flex: 1;
+  text-align: center;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .toolbar-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-/* =====================
-   ボタン
-======================== */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
+  gap: 4px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--bg-tool);
+  color: var(--text);
   font-family: var(--font);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
-  background: var(--bg);
-  color: var(--text);
+  transition: background 0.15s, border-color 0.15s;
 }
 
-.btn:active { transform: scale(0.97); }
-
-.btn-secondary:hover {
-  background: var(--accent-light);
+.btn:hover {
+  background: var(--accent-bg);
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.btn-danger {
-  color: var(--danger);
-}
-
+.btn-danger { color: var(--danger); }
 .btn-danger:hover {
   background: var(--danger);
   border-color: var(--danger);
@@ -112,53 +115,117 @@ html, body {
 }
 
 /* =====================
-   エディタ
+   キャンバス
 ======================== */
-.editor-wrap {
-  flex: 1;
-  overflow-y: auto;
-  padding: 40px 0;
+.canvas {
+  position: fixed;
+  top: 44px;
+  left: 0; right: 0;
+  bottom: 28px;
+  overflow: hidden;
+  cursor: default;
+  /* ドットグリッド背景 */
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
 }
 
-.editor {
-  max-width: 800px;
-  min-height: 100%;
-  margin: 0 auto;
-  padding: 0 24px 80px;
-  outline: none;
-  line-height: 1.8;
-  font-size: 15px;
-  color: var(--text);
-  word-break: break-word;
-}
-
-/* プレースホルダー */
-.editor:empty::before {
-  content: attr(data-placeholder);
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
-/* 画像スタイル */
-.editor img {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  margin: 12px 0;
+/* =====================
+   メモ要素（共通）
+======================== */
+.memo-el {
+  position: absolute;
+  cursor: move;
+  border: 1.5px solid transparent;
   border-radius: var(--radius);
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  background: var(--el-bg);
+  box-shadow: var(--el-shadow);
+  user-select: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
 }
 
-.editor img.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-light);
-}
-
-.editor img:hover:not(.selected) {
+.memo-el:hover {
   border-color: var(--border);
 }
+
+.memo-el.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg), var(--el-shadow);
+  z-index: 100;
+}
+
+.memo-el.editing {
+  cursor: text;
+}
+
+/* =====================
+   テキスト要素
+======================== */
+.memo-text .el-content {
+  display: block;
+  width: 100%;
+  min-height: inherit;
+  padding: 8px 10px;
+  outline: none;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  border-radius: var(--radius);
+  cursor: inherit;
+}
+
+.memo-text .el-content[contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+}
+
+/* =====================
+   画像要素
+======================== */
+.memo-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* =====================
+   リサイズハンドル（8方向）
+======================== */
+.rh {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: var(--handle-bg);
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+  z-index: 10;
+}
+
+.memo-el.selected .rh {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 位置 */
+.rh-nw { top: -5px;  left: -5px;               cursor: nw-resize; }
+.rh-n  { top: -5px;  left: calc(50% - 4.5px);  cursor: n-resize;  }
+.rh-ne { top: -5px;  right: -5px;               cursor: ne-resize; }
+.rh-e  { top: calc(50% - 4.5px); right: -5px;  cursor: e-resize;  }
+.rh-se { bottom: -5px; right: -5px;             cursor: se-resize; }
+.rh-s  { bottom: -5px; left: calc(50% - 4.5px);cursor: s-resize;  }
+.rh-sw { bottom: -5px; left: -5px;              cursor: sw-resize; }
+.rh-w  { top: calc(50% - 4.5px); left: -5px;   cursor: w-resize;  }
 
 /* =====================
    ドロップオーバーレイ
@@ -166,7 +233,7 @@ html, body {
 .drop-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(74, 144, 217, 0.15);
+  background: rgba(74,144,217,0.15);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -174,30 +241,32 @@ html, body {
   z-index: 9999;
   border: 3px dashed var(--accent);
 }
-
 .drop-overlay[hidden] { display: none; }
-
-.drop-overlay-inner {
+.drop-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   color: var(--accent);
   font-size: 18px;
   font-weight: 600;
 }
 
 /* =====================
-   フッター
+   ステータスバー
 ======================== */
-.footer {
+.statusbar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 24px;
+  padding: 0 16px;
   background: var(--bg-tool);
   border-top: 1px solid var(--border);
-  flex-shrink: 0;
+  z-index: 1000;
+  user-select: none;
 }
 
 .info, .save-status {
