@@ -428,6 +428,22 @@ document.addEventListener('mousemove', e => {
     if (handle.includes('w')) { w = Math.max(MIN_W, startW - dx); x = startX + startW - w; }
     if (handle.includes('n')) { h = Math.max(MIN_H, startH - dy); y = startY + startH - h; }
 
+    // Shift+コーナーハンドルで縦横比を固定
+    const isCorner = handle.length === 2;
+    if (isCorner && e.shiftKey) {
+      const aspect = startW / startH;
+      const wRatio = Math.abs(w - startW) / startW;
+      const hRatio = Math.abs(h - startH) / startH;
+      if (wRatio >= hRatio) {
+        h = Math.max(MIN_H, w / aspect);
+      } else {
+        w = Math.max(MIN_W, h * aspect);
+      }
+      // w/n ハンドルは原点側を再計算
+      if (handle.includes('w')) x = startX + startW - w;
+      if (handle.includes('n')) y = startY + startH - h;
+    }
+
     const elem = getElem(resizeState.id);
     elem.x = x; elem.y = y; elem.w = w; elem.h = h;
     syncDOM(resizeState.id);
@@ -515,10 +531,9 @@ canvasInnerEl.addEventListener('contextmenu', async e => {
   try {
     const blob = await dataUrlToPngBlob(elem.content);
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    setStatus('saved', '画像をコピーしました');
-    setTimeout(() => setStatus('', '保存済み'), 2000);
+    flash('画像をコピーしました');
   } catch (err) {
-    setStatus('', 'コピー失敗: ' + err.message);
+    flash('コピー失敗: ' + err.message);
     console.error(err);
   }
 });
@@ -587,9 +602,9 @@ function fileToDataURL(file) {
 }
 
 async function insertImageFile(file, dropX, dropY) {
-  if (!file.type.startsWith('image/')) { alert('画像ファイルのみ対応しています。'); return; }
+  if (!file.type.startsWith('image/')) { flash('画像ファイルのみ対応しています'); return; }
   if (file.size > MAX_IMG) {
-    alert(`1枚最大5MBです（この画像: ${(file.size/1024/1024).toFixed(1)}MB）`);
+    flash(`1枚最大5MB（この画像: ${(file.size/1024/1024).toFixed(1)}MB）`);
     return;
   }
   const dataUrl = await fileToDataURL(file);
@@ -641,12 +656,12 @@ function dl(blob, name) {
 
 btnExportTxt.addEventListener('click', () => {
   const lines = elements.filter(e => e.type === 'text' && e.content.trim()).map(e => e.content);
-  if (!lines.length) { alert('テキストがありません。'); return; }
+  if (!lines.length) { flash('テキストがありません'); return; }
   dl(new Blob([lines.join('\n\n---\n\n')], { type: 'text/plain;charset=utf-8' }), `memo_${ts()}.txt`);
 });
 
 btnExportHtml.addEventListener('click', () => {
-  if (!elements.length) { alert('メモが空です。'); return; }
+  if (!elements.length) { flash('メモが空です'); return; }
   const body = elements.map(e => {
     const s = `position:absolute;left:${e.x}px;top:${e.y}px;width:${e.w}px;`;
     if (e.type === 'text') {
@@ -671,7 +686,7 @@ function escHtml(s) {
 // ── クリア ────────────────────────────────────────────────────────
 btnClear.addEventListener('click', async () => {
   if (!elements.length) return;
-  if (!confirm('すべての要素を削除しますか？\nこの操作は元に戻せません。')) return;
+  if (!confirm('すべての要素を削除しますか？\n（戻る または Ctrl+Z で取り消せます）')) return;
   elements = [];
   domMap.forEach(el => el.remove());
   domMap.clear();
@@ -688,6 +703,12 @@ btnClear.addEventListener('click', async () => {
 function setStatus(cls, text) {
   saveEl.className  = 'save-status' + (cls ? ` ${cls}` : '');
   saveEl.textContent = text;
+}
+
+// 一時メッセージを 2 秒間ステータスバーに表示
+function flash(text) {
+  setStatus('', text);
+  setTimeout(() => setStatus('', '保存済み'), 2000);
 }
 
 function updateInfo() {
