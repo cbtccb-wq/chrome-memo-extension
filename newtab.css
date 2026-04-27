@@ -142,6 +142,13 @@ html, body {
   background-size: 24px 24px;
 }
 
+/* パン中・Space 押下中のカーソル */
+.canvas.space-held              { cursor: grab; }
+.canvas.space-held .memo-el     { cursor: grab; }
+.canvas.space-held .memo-el.selected .rh { pointer-events: none; }
+.canvas.panning,
+.canvas.panning .memo-el        { cursor: grabbing; }
+
 /* ズームを受ける内側ラッパ。要素はすべてここに append される */
 .canvas-inner {
   position: absolute;

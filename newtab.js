@@ -46,6 +46,10 @@ let scale = 1;
 let tx    = 0;
 let ty    = 0;
 
+// パン状態
+let panState  = null;  // { startMX, startMY, startTX, startTY }
+let spaceHeld = false;
+
 // Undo/Redo 履歴
 let history    = [];   // 各要素は elements の浅いコピー配列
 let historyIdx = -1;
@@ -345,6 +349,17 @@ function stopEditing() {
 
 // ── マウスイベント ────────────────────────────────────────────────
 canvasEl.addEventListener('mousedown', e => {
+  // パン開始（Space+左クリック または 中ボタン）
+  if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+    e.preventDefault();
+    panState = {
+      startMX: e.clientX, startMY: e.clientY,
+      startTX: tx,        startTY: ty,
+    };
+    canvasEl.classList.add('panning');
+    return;
+  }
+
   const rhEl = e.target.closest('.rh');
   const meEl = e.target.closest('.memo-el');
 
@@ -405,6 +420,13 @@ canvasEl.addEventListener('dblclick', e => {
 });
 
 document.addEventListener('mousemove', e => {
+  if (panState) {
+    tx = panState.startTX + (e.clientX - panState.startMX);
+    ty = panState.startTY + (e.clientY - panState.startMY);
+    applyTransform();
+    return;
+  }
+
   if (dragState) {
     // ズーム時は画面差分をスケールで割って論理座標差分にする
     const dx = (e.clientX - dragState.startMX) / scale;
@@ -451,6 +473,11 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => {
+  if (panState) {
+    panState = null;
+    canvasEl.classList.remove('panning');
+    return;
+  }
   const dragChanged   = dragState?.hasMoved;
   const resizeChanged = !!resizeState;
   if (dragState || resizeState) scheduleSave();
@@ -465,6 +492,14 @@ document.addEventListener('keydown', e => {
   if (!editingId && (e.ctrlKey || e.metaKey)) {
     if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); return; }
+  }
+
+  // Space を押下中はパンモード（編集中は除外）
+  if (!editingId && e.code === 'Space' && !e.repeat) {
+    spaceHeld = true;
+    canvasEl.classList.add('space-held');
+    e.preventDefault();
+    return;
   }
 
   // 編集中は Escape で編集終了のみ
@@ -498,6 +533,21 @@ document.addEventListener('keydown', e => {
     // 連打時の履歴ノイズを抑えるため、最終押下から 500ms 経過後に 1 回 push
     clearTimeout(arrowKeyTimer);
     arrowKeyTimer = setTimeout(() => { arrowKeyTimer = null; pushHistory(); }, 500);
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' && spaceHeld) {
+    spaceHeld = false;
+    canvasEl.classList.remove('space-held');
+  }
+});
+
+// タブ切り替え等で Space が押されっぱなしになるのを防ぐ
+window.addEventListener('blur', () => {
+  if (spaceHeld) {
+    spaceHeld = false;
+    canvasEl.classList.remove('space-held');
   }
 });
 
