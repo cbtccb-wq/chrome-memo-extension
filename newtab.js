@@ -57,6 +57,12 @@ let historyIdx = -1;
 let editingStartContent = null; // テキスト編集前の content（変更検出用）
 let arrowKeyTimer   = null;     // 矢印キー履歴コミットのデバウンス
 
+// 要素のコピー&ペースト用（システムクリップボードとは別の内部バッファ）
+let elementClipboard = null;
+
+// グリッドスナップの粒度（CSS のドットグリッドと一致）
+const GRID = 24;
+
 // ── ユーティリティ ────────────────────────────────────────────────
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -442,8 +448,15 @@ document.addEventListener('mousemove', e => {
     const dy = (e.clientY - dragState.startMY) / scale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.hasMoved = true;
     const elem = getElem(dragState.id);
-    elem.x = Math.max(0, dragState.startEX + dx);
-    elem.y = Math.max(0, dragState.startEY + dy);
+    let nx = Math.max(0, dragState.startEX + dx);
+    let ny = Math.max(0, dragState.startEY + dy);
+    // Shift 押下中はグリッド (24px) にスナップ
+    if (e.shiftKey) {
+      nx = Math.max(0, Math.round(nx / GRID) * GRID);
+      ny = Math.max(0, Math.round(ny / GRID) * GRID);
+    }
+    elem.x = nx;
+    elem.y = ny;
     syncDOM(dragState.id);
     return;
   }
@@ -614,15 +627,33 @@ btnRedo.addEventListener('click', redo);
 // ── ズームピル（クリックでビューリセット） ────────────────────────
 zoomPill.addEventListener('click', resetView);
 
-// ── 画像貼り付け（Ctrl+V）────────────────────────────────────────
+// ── コピー&ペースト ──────────────────────────────────────────────
+document.addEventListener('copy', e => {
+  if (editingId || !selectedId) return;
+  const elem = getElem(selectedId);
+  if (!elem) return;
+  elementClipboard = { ...elem };
+  e.preventDefault();
+  flash('要素をコピーしました');
+});
+
 document.addEventListener('paste', async e => {
   if (editingId) return; // テキスト編集中は通常のペーストに任せる
   const items = [...(e.clipboardData?.items || [])];
   const imgItem = items.find(i => i.type.startsWith('image/'));
+  // 1. システムクリップボードに画像があればそれを優先
   if (imgItem) {
     e.preventDefault();
     const file = imgItem.getAsFile();
     if (file) await insertImageFile(file, null, null);
+    return;
+  }
+  // 2. 内部クリップボードに要素があれば +20px ずらして複製
+  if (elementClipboard) {
+    e.preventDefault();
+    const c = elementClipboard;
+    const newEl = addElement(c.type, c.x + 20, c.y + 20, c.w, c.h, c.content);
+    selectEl(newEl.id);
   }
 });
 
