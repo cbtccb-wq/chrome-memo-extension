@@ -238,7 +238,8 @@ html, body {
   z-index: 10;
 }
 
-.memo-el.selected .rh {
+/* リサイズハンドルはプライマリ要素にだけ表示 */
+.memo-el.primary .rh {
   opacity: 1;
   pointer-events: auto;
 }
@@ -268,6 +269,18 @@ html, body {
   border: 3px dashed var(--accent);
 }
 .drop-overlay[hidden] { display: none; }
+
+/* =====================
+   マーキー（矩形選択）
+======================== */
+.marquee {
+  position: absolute;
+  background: rgba(74,144,217,0.15);
+  border: 1px dashed var(--accent);
+  pointer-events: none;
+  z-index: 500;
+}
+.marquee[hidden] { display: none; }
 .drop-inner {
   display: flex;
   flex-direction: column;

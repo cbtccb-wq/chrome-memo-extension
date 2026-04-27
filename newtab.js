@@ -25,22 +25,28 @@ const btnExportTxt  = document.getElementById('btn-export-txt');
 const btnExportHtml = document.getElementById('btn-export-html');
 const btnClear      = document.getElementById('btn-clear');
 const zoomPill      = document.getElementById('zoom-pill');
+const marqueeEl     = document.getElementById('marquee');
 
 // ── アプリ状態 ────────────────────────────────────────────────────
-let elements   = [];       // [{id, type, x, y, w, h, content}]
-let domMap     = new Map();// id → DOM要素
-let selectedId = null;
-let editingId  = null;
+let elements    = [];       // [{id, type, x, y, w, h, content}]
+let domMap      = new Map();// id → DOM要素
+let selectedIds = new Set();// 選択中の要素 ID（複数選択対応）
+let primaryId   = null;     // プライマリ選択（リサイズハンドルはこれだけ表示）
+let editingId   = null;
 let db;
-let zCounter   = 10;       // z-index管理
+let zCounter    = 10;       // z-index管理
 
-// ドラッグ状態
+// ドラッグ状態（複数選択をまとめて移動）
 let dragState  = null;
-// { id, startMX, startMY, startEX, startEY, hasMoved }
+// { ids, startMX, startMY, starts: Map<id,{x,y}>, hasMoved }
 
-// リサイズ状態
+// リサイズ状態（プライマリ要素のみが対象）
 let resizeState = null;
 // { id, handle, startMX, startMY, startX, startY, startW, startH }
+
+// 矩形選択（マーキー）状態
+let marqueeState = null;
+// { startSX, startSY, additive }
 
 // ズーム状態（永続化しない）
 let scale = 1;
@@ -116,8 +122,9 @@ function restoreSnapshot(snap) {
   // 既存 DOM を全消去して再構築
   domMap.forEach(el => el.remove());
   domMap.clear();
-  selectedId = null;
-  editingId  = null;
+  selectedIds.clear();
+  primaryId = null;
+  editingId = null;
   elements = snap.map(e => ({ ...e }));
   elements.forEach(e => mountDOM(e));
   scheduleSave();
@@ -291,33 +298,141 @@ function addElement(type, x, y, w, h, content) {
 function removeElement(id) {
   elements = elements.filter(e => e.id !== id);
   unmountDOM(id);
-  if (selectedId === id) selectedId = null;
-  if (editingId  === id) editingId  = null;
+  selectedIds.delete(id);
+  if (primaryId === id) primaryId = pickFallbackPrimary();
+  if (editingId === id) editingId = null;
   scheduleSave();
   updateInfo();
   pushHistory();
 }
 
+function removeElements(ids) {
+  if (!ids.length) return;
+  elements = elements.filter(e => !ids.includes(e.id));
+  for (const id of ids) {
+    unmountDOM(id);
+    selectedIds.delete(id);
+    if (editingId === id) editingId = null;
+  }
+  if (!selectedIds.has(primaryId)) primaryId = pickFallbackPrimary();
+  scheduleSave();
+  updateInfo();
+  pushHistory();
+}
+
+function pickFallbackPrimary() {
+  // selectedIds の任意の 1 つ（無ければ null）
+  return selectedIds.size ? selectedIds.values().next().value : null;
+}
+
+// ── 矩形選択（マーキー） ──────────────────────────────────────────
+function showMarquee(clientX, clientY) {
+  const rect = canvasEl.getBoundingClientRect();
+  const sx = clientX - rect.left;
+  const sy = clientY - rect.top;
+  const minX = Math.min(marqueeState.startSX, sx);
+  const minY = Math.min(marqueeState.startSY, sy);
+  const w = Math.abs(sx - marqueeState.startSX);
+  const h = Math.abs(sy - marqueeState.startSY);
+  if (w < 3 && h < 3) { marqueeEl.hidden = true; return; }
+  marqueeEl.hidden = false;
+  marqueeEl.style.left   = minX + 'px';
+  marqueeEl.style.top    = minY + 'px';
+  marqueeEl.style.width  = w + 'px';
+  marqueeEl.style.height = h + 'px';
+}
+
+function hideMarqueeDom() {
+  marqueeEl.hidden = true;
+}
+
+function finalizeMarquee(clientX, clientY) {
+  const rect = canvasEl.getBoundingClientRect();
+  const sx = clientX - rect.left;
+  const sy = clientY - rect.top;
+  const minSX = Math.min(marqueeState.startSX, sx);
+  const minSY = Math.min(marqueeState.startSY, sy);
+  const maxSX = Math.max(marqueeState.startSX, sx);
+  const maxSY = Math.max(marqueeState.startSY, sy);
+  // 3px 未満の動きは「空白クリック」とみなす
+  if ((maxSX - minSX) < 3 && (maxSY - minSY) < 3) {
+    if (!marqueeState.additive) deselectAll();
+    return;
+  }
+  // 画面座標 → キャンバス座標へ変換して交差判定
+  const cMinX = (minSX - tx) / scale;
+  const cMinY = (minSY - ty) / scale;
+  const cMaxX = (maxSX - tx) / scale;
+  const cMaxY = (maxSY - ty) / scale;
+  if (!marqueeState.additive) clearSelection();
+  for (const elem of elements) {
+    const ex2 = elem.x + elem.w;
+    const ey2 = elem.y + elem.h;
+    const intersects = !(ex2 < cMinX || elem.x > cMaxX || ey2 < cMinY || elem.y > cMaxY);
+    if (intersects && !selectedIds.has(elem.id)) {
+      selectedIds.add(elem.id);
+      const div = domMap.get(elem.id);
+      if (div) {
+        div.classList.add('selected');
+        div.style.zIndex = ++zCounter;
+      }
+      setPrimary(elem.id);
+    }
+  }
+}
+
 // ── 選択 ─────────────────────────────────────────────────────────
-function selectEl(id) {
-  if (selectedId === id) return;
-  if (selectedId) {
-    domMap.get(selectedId)?.classList.remove('selected');
+function selectEl(id, additive = false) {
+  if (additive) {
+    // Shift+クリック等: トグル
+    if (selectedIds.has(id)) {
+      selectedIds.delete(id);
+      domMap.get(id)?.classList.remove('selected', 'primary');
+      if (primaryId === id) {
+        primaryId = pickFallbackPrimary();
+        if (primaryId) domMap.get(primaryId)?.classList.add('primary');
+      }
+    } else {
+      selectedIds.add(id);
+      const div = domMap.get(id);
+      if (div) {
+        div.classList.add('selected');
+        div.style.zIndex = ++zCounter;
+      }
+      setPrimary(id);
+    }
+  } else {
+    // 単独選択: 既に primary なら何もしない、違うなら全置換
+    if (primaryId === id && selectedIds.size === 1) return;
+    clearSelection();
+    selectedIds.add(id);
+    const div = domMap.get(id);
+    if (div) {
+      div.classList.add('selected');
+      div.style.zIndex = ++zCounter;
+    }
+    setPrimary(id);
   }
-  selectedId = id;
-  const div = domMap.get(id);
-  if (div) {
-    div.classList.add('selected');
-    div.style.zIndex = ++zCounter;
+}
+
+function setPrimary(id) {
+  if (primaryId === id) return;
+  if (primaryId) domMap.get(primaryId)?.classList.remove('primary');
+  primaryId = id;
+  if (id) domMap.get(id)?.classList.add('primary');
+}
+
+function clearSelection() {
+  for (const id of selectedIds) {
+    domMap.get(id)?.classList.remove('selected', 'primary');
   }
+  selectedIds.clear();
+  primaryId = null;
 }
 
 function deselectAll() {
   if (editingId) stopEditing();
-  if (selectedId) {
-    domMap.get(selectedId)?.classList.remove('selected');
-    selectedId = null;
-  }
+  clearSelection();
 }
 
 // ── テキスト編集 ──────────────────────────────────────────────────
@@ -375,16 +490,17 @@ canvasEl.addEventListener('mousedown', e => {
     return;
   }
 
+  if (e.button !== 0) return;
+
   const rhEl = e.target.closest('.rh');
   const meEl = e.target.closest('.memo-el');
 
-  // リサイズ開始
+  // リサイズ開始（プライマリ要素のみハンドルが効く）
   if (rhEl && meEl) {
     e.preventDefault();
     e.stopPropagation();
     const id   = meEl.dataset.id;
     const elem = getElem(id);
-    selectEl(id);
     resizeState = {
       id,
       handle: rhEl.dataset.handle,
@@ -400,19 +516,39 @@ canvasEl.addEventListener('mousedown', e => {
     if (editingId === meEl.dataset.id) return; // 編集中はドラッグしない
     e.preventDefault();
     const id = meEl.dataset.id;
-    selectEl(id);
-    const elem = getElem(id);
+    // Shift+クリック → トグル追加。すでに選択済みなら維持、未選択なら単独選択。
+    if (e.shiftKey) {
+      selectEl(id, true);
+    } else if (!selectedIds.has(id)) {
+      selectEl(id, false);
+    } else {
+      // 既に選択済み: プライマリだけ更新して全体は維持
+      setPrimary(id);
+    }
+    // 選択中の全要素の開始位置を記録（複数まとめて移動）
+    const ids = [...selectedIds];
+    const starts = new Map();
+    for (const sid of ids) {
+      const se = getElem(sid);
+      if (se) starts.set(sid, { x: se.x, y: se.y });
+    }
     dragState = {
-      id,
+      ids,
       startMX: e.clientX, startMY: e.clientY,
-      startEX: elem.x,    startEY: elem.y,
+      starts,
       hasMoved: false,
     };
     return;
   }
 
-  // キャンバス空白クリック → 選択解除
-  deselectAll();
+  // 空白での mousedown → 矩形選択開始（Shift で追加選択）
+  e.preventDefault();
+  const rect = canvasEl.getBoundingClientRect();
+  marqueeState = {
+    startSX: e.clientX - rect.left,
+    startSY: e.clientY - rect.top,
+    additive: e.shiftKey,
+  };
 });
 
 canvasEl.addEventListener('dblclick', e => {
@@ -444,20 +580,42 @@ document.addEventListener('mousemove', e => {
 
   if (dragState) {
     // ズーム時は画面差分をスケールで割って論理座標差分にする
-    const dx = (e.clientX - dragState.startMX) / scale;
-    const dy = (e.clientY - dragState.startMY) / scale;
+    let dx = (e.clientX - dragState.startMX) / scale;
+    let dy = (e.clientY - dragState.startMY) / scale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.hasMoved = true;
-    const elem = getElem(dragState.id);
-    let nx = Math.max(0, dragState.startEX + dx);
-    let ny = Math.max(0, dragState.startEY + dy);
-    // Shift 押下中はグリッド (24px) にスナップ
-    if (e.shiftKey) {
-      nx = Math.max(0, Math.round(nx / GRID) * GRID);
-      ny = Math.max(0, Math.round(ny / GRID) * GRID);
+    // Shift 押下中はグリッド (24px) にスナップ。プライマリの最終位置を基準に丸める
+    if (e.shiftKey && primaryId) {
+      const ps = dragState.starts.get(primaryId);
+      if (ps) {
+        const targetX = Math.max(0, Math.round((ps.x + dx) / GRID) * GRID);
+        const targetY = Math.max(0, Math.round((ps.y + dy) / GRID) * GRID);
+        dx = targetX - ps.x;
+        dy = targetY - ps.y;
+      }
     }
-    elem.x = nx;
-    elem.y = ny;
-    syncDOM(dragState.id);
+    // 全要素を相対移動（最小座標が 0 を割らないようクランプ）
+    let minX = Infinity, minY = Infinity;
+    for (const id of dragState.ids) {
+      const s = dragState.starts.get(id);
+      if (!s) continue;
+      minX = Math.min(minX, s.x + dx);
+      minY = Math.min(minY, s.y + dy);
+    }
+    if (minX < 0) dx -= minX;
+    if (minY < 0) dy -= minY;
+    for (const id of dragState.ids) {
+      const s = dragState.starts.get(id);
+      const elem = getElem(id);
+      if (!s || !elem) continue;
+      elem.x = s.x + dx;
+      elem.y = s.y + dy;
+      syncDOM(id);
+    }
+    return;
+  }
+
+  if (marqueeState) {
+    showMarquee(e.clientX, e.clientY);
     return;
   }
 
@@ -494,10 +652,16 @@ document.addEventListener('mousemove', e => {
   }
 });
 
-document.addEventListener('mouseup', () => {
+document.addEventListener('mouseup', e => {
   if (panState) {
     panState = null;
     canvasEl.classList.remove('panning');
+    return;
+  }
+  if (marqueeState) {
+    finalizeMarquee(e.clientX, e.clientY);
+    marqueeState = null;
+    hideMarqueeDom();
     return;
   }
   const dragChanged   = dragState?.hasMoved;
@@ -530,27 +694,42 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  if (!selectedId) return;
+  if (!selectedIds.size) return;
 
-  // 削除
+  // 削除（選択中の全要素）
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
-    removeElement(selectedId);
+    removeElements([...selectedIds]);
     return;
   }
 
-  // 矢印キーで微調整
+  // 矢印キーで微調整（選択中の全要素を同じだけ動かす）
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
-    const elem = getElem(selectedId);
-    if (e.key === 'ArrowUp')    elem.y -= step;
-    if (e.key === 'ArrowDown')  elem.y += step;
-    if (e.key === 'ArrowLeft')  elem.x -= step;
-    if (e.key === 'ArrowRight') elem.x += step;
-    elem.x = Math.max(0, elem.x);
-    elem.y = Math.max(0, elem.y);
-    syncDOM(selectedId);
+    let dx = 0, dy = 0;
+    if (e.key === 'ArrowUp')    dy = -step;
+    if (e.key === 'ArrowDown')  dy =  step;
+    if (e.key === 'ArrowLeft')  dx = -step;
+    if (e.key === 'ArrowRight') dx =  step;
+    // 0 を割らないように全体クランプ
+    let minX = Infinity, minY = Infinity;
+    for (const id of selectedIds) {
+      const elem = getElem(id);
+      if (elem) {
+        minX = Math.min(minX, elem.x + dx);
+        minY = Math.min(minY, elem.y + dy);
+      }
+    }
+    if (minX < 0) dx -= minX;
+    if (minY < 0) dy -= minY;
+    for (const id of selectedIds) {
+      const elem = getElem(id);
+      if (!elem) continue;
+      elem.x += dx;
+      elem.y += dy;
+      syncDOM(id);
+    }
     scheduleSave();
     // 連打時の履歴ノイズを抑えるため、最終押下から 500ms 経過後に 1 回 push
     clearTimeout(arrowKeyTimer);
@@ -629,12 +808,16 @@ zoomPill.addEventListener('click', resetView);
 
 // ── コピー&ペースト ──────────────────────────────────────────────
 document.addEventListener('copy', e => {
-  if (editingId || !selectedId) return;
-  const elem = getElem(selectedId);
-  if (!elem) return;
-  elementClipboard = { ...elem };
+  if (editingId || !selectedIds.size) return;
+  // 選択中の要素をすべて配列としてコピー
+  elementClipboard = [...selectedIds].map(id => {
+    const elem = getElem(id);
+    return elem ? { ...elem } : null;
+  }).filter(Boolean);
   e.preventDefault();
-  flash('要素をコピーしました');
+  flash(elementClipboard.length === 1
+    ? '要素をコピーしました'
+    : `${elementClipboard.length} 個の要素をコピーしました`);
 });
 
 document.addEventListener('paste', async e => {
@@ -649,11 +832,13 @@ document.addEventListener('paste', async e => {
     return;
   }
   // 2. 内部クリップボードに要素があれば +20px ずらして複製
-  if (elementClipboard) {
+  if (elementClipboard?.length) {
     e.preventDefault();
-    const c = elementClipboard;
-    const newEl = addElement(c.type, c.x + 20, c.y + 20, c.w, c.h, c.content);
-    selectEl(newEl.id);
+    clearSelection();
+    for (const c of elementClipboard) {
+      const newEl = addElement(c.type, c.x + 20, c.y + 20, c.w, c.h, c.content);
+      selectEl(newEl.id, true);
+    }
   }
 });
 
@@ -783,8 +968,9 @@ btnClear.addEventListener('click', async () => {
   elements = [];
   domMap.forEach(el => el.remove());
   domMap.clear();
-  selectedId = null;
-  editingId  = null;
+  selectedIds.clear();
+  primaryId = null;
+  editingId = null;
   await dbSave([]);
   setStatus('saved', 'クリアしました');
   setTimeout(() => setStatus('', '保存済み'), 2000);
