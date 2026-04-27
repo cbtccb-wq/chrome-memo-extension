@@ -9,12 +9,18 @@ const SAVE_DELAY = 600;
 const MIN_W      = 80;
 const MIN_H      = 36;
 const HANDLES    = ['nw','n','ne','e','se','s','sw','w'];
+const MIN_SCALE  = 0.25;
+const MAX_SCALE  = 4;
+const HISTORY_MAX = 50;
 
 // ── DOM refs ──────────────────────────────────────────────────────
 const canvasEl      = document.getElementById('canvas');
+const canvasInnerEl = document.getElementById('canvas-inner');
 const dropOverlay   = document.getElementById('drop-overlay');
 const infoEl        = document.getElementById('info');
 const saveEl        = document.getElementById('save-status');
+const btnUndo       = document.getElementById('btn-undo');
+const btnRedo       = document.getElementById('btn-redo');
 const btnExportTxt  = document.getElementById('btn-export-txt');
 const btnExportHtml = document.getElementById('btn-export-html');
 const btnClear      = document.getElementById('btn-clear');
@@ -35,6 +41,17 @@ let dragState  = null;
 let resizeState = null;
 // { id, handle, startMX, startMY, startX, startY, startW, startH }
 
+// ズーム状態（永続化しない）
+let scale = 1;
+let tx    = 0;
+let ty    = 0;
+
+// Undo/Redo 履歴
+let history    = [];   // 各要素は elements の浅いコピー配列
+let historyIdx = -1;
+let editingStartContent = null; // テキスト編集前の content（変更検出用）
+let arrowKeyTimer   = null;     // 矢印キー履歴コミットのデバウンス
+
 // ── ユーティリティ ────────────────────────────────────────────────
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -42,6 +59,69 @@ function uid() {
 
 function getElem(id) {
   return elements.find(e => e.id === id);
+}
+
+// 画面座標 → キャンバス（論理）座標
+function screenToCanvas(clientX, clientY) {
+  const rect = canvasEl.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left - tx) / scale,
+    y: (clientY - rect.top  - ty) / scale,
+  };
+}
+
+// ズーム/パンを transform に反映
+function applyTransform() {
+  canvasInnerEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+}
+
+// ── Undo/Redo ─────────────────────────────────────────────────────
+function snapshotElements() {
+  // 各 elem は浅くコピー。content 文字列は immutable なので参照共有 OK
+  return elements.map(e => ({ ...e }));
+}
+
+function pushHistory() {
+  // redo スタックを切り捨て
+  history = history.slice(0, historyIdx + 1);
+  history.push(snapshotElements());
+  if (history.length > HISTORY_MAX) {
+    history.shift();
+  } else {
+    historyIdx++;
+  }
+  updateUndoRedoButtons();
+}
+
+function restoreSnapshot(snap) {
+  // 既存 DOM を全消去して再構築
+  domMap.forEach(el => el.remove());
+  domMap.clear();
+  selectedId = null;
+  editingId  = null;
+  elements = snap.map(e => ({ ...e }));
+  elements.forEach(e => mountDOM(e));
+  scheduleSave();
+  updateInfo();
+}
+
+function undo() {
+  if (historyIdx <= 0) return;
+  historyIdx--;
+  restoreSnapshot(history[historyIdx]);
+  updateUndoRedoButtons();
+}
+
+function redo() {
+  if (historyIdx >= history.length - 1) return;
+  historyIdx++;
+  restoreSnapshot(history[historyIdx]);
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+  btnUndo.disabled = historyIdx <= 0;
+  btnRedo.disabled = historyIdx >= history.length - 1;
 }
 
 // ── IndexedDB ─────────────────────────────────────────────────────
@@ -107,6 +187,8 @@ function scheduleSave() {
     elements.forEach(e => mountDOM(e));
   }
   updateInfo();
+  // 初期状態を履歴の起点として記録
+  pushHistory();
 })();
 
 // ── DOM構築 ──────────────────────────────────────────────────────
@@ -148,7 +230,7 @@ function buildElement(elem) {
 
 function mountDOM(elem) {
   const div = buildElement(elem);
-  canvasEl.appendChild(div);
+  canvasInnerEl.appendChild(div);
   domMap.set(elem.id, div);
 }
 
@@ -183,6 +265,7 @@ function addElement(type, x, y, w, h, content) {
   mountDOM(elem);
   scheduleSave();
   updateInfo();
+  pushHistory();
   return elem;
 }
 
@@ -193,6 +276,7 @@ function removeElement(id) {
   if (editingId  === id) editingId  = null;
   scheduleSave();
   updateInfo();
+  pushHistory();
 }
 
 // ── 選択 ─────────────────────────────────────────────────────────
@@ -225,6 +309,7 @@ function startEditing(id) {
   const inner = div?.querySelector('.el-content');
   if (!inner) return;
   editingId = id;
+  editingStartContent = getElem(id)?.content ?? '';
   inner.contentEditable = 'true';
   div.classList.add('editing');
   inner.focus();
@@ -241,17 +326,21 @@ function stopEditing() {
   if (!editingId) return;
   const div   = domMap.get(editingId);
   const inner = div?.querySelector('.el-content');
+  let changed = false;
   if (inner) {
     inner.contentEditable = 'false';
     div.classList.remove('editing');
     const elem = getElem(editingId);
     if (elem) {
+      changed = (editingStartContent !== inner.textContent);
       elem.content = inner.textContent;
       elem.h = Math.max(MIN_H, div.offsetHeight);
       scheduleSave();
     }
   }
   editingId = null;
+  editingStartContent = null;
+  if (changed) pushHistory();
 }
 
 // ── マウスイベント ────────────────────────────────────────────────
@@ -308,10 +397,8 @@ canvasEl.addEventListener('dblclick', e => {
 
   // 空白ダブルクリック → テキストボックス新規作成
   if (!meEl) {
-    const rect = canvasEl.getBoundingClientRect();
-    const x = e.clientX - rect.left - 100;
-    const y = e.clientY - rect.top  - 20;
-    const elem = addElement('text', Math.max(0, x), Math.max(0, y), 200, MIN_H, '');
+    const { x: cx, y: cy } = screenToCanvas(e.clientX, e.clientY);
+    const elem = addElement('text', Math.max(0, cx - 100), Math.max(0, cy - 20), 200, MIN_H, '');
     selectEl(elem.id);
     startEditing(elem.id);
   }
@@ -319,8 +406,9 @@ canvasEl.addEventListener('dblclick', e => {
 
 document.addEventListener('mousemove', e => {
   if (dragState) {
-    const dx = e.clientX - dragState.startMX;
-    const dy = e.clientY - dragState.startMY;
+    // ズーム時は画面差分をスケールで割って論理座標差分にする
+    const dx = (e.clientX - dragState.startMX) / scale;
+    const dy = (e.clientY - dragState.startMY) / scale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.hasMoved = true;
     const elem = getElem(dragState.id);
     elem.x = Math.max(0, dragState.startEX + dx);
@@ -331,8 +419,8 @@ document.addEventListener('mousemove', e => {
 
   if (resizeState) {
     const { handle, startMX, startMY, startX, startY, startW, startH } = resizeState;
-    const dx = e.clientX - startMX;
-    const dy = e.clientY - startMY;
+    const dx = (e.clientX - startMX) / scale;
+    const dy = (e.clientY - startMY) / scale;
     let x = startX, y = startY, w = startW, h = startH;
 
     if (handle.includes('e')) { w = Math.max(MIN_W, startW + dx); }
@@ -347,13 +435,22 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => {
+  const dragChanged   = dragState?.hasMoved;
+  const resizeChanged = !!resizeState;
   if (dragState || resizeState) scheduleSave();
   dragState   = null;
   resizeState = null;
+  if (dragChanged || resizeChanged) pushHistory();
 });
 
 // ── キーボード ────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  // Undo/Redo（編集中は contentEditable のネイティブ挙動に任せる）
+  if (!editingId && (e.ctrlKey || e.metaKey)) {
+    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); return; }
+  }
+
   // 編集中は Escape で編集終了のみ
   if (editingId) {
     if (e.key === 'Escape') stopEditing();
@@ -382,8 +479,63 @@ document.addEventListener('keydown', e => {
     elem.y = Math.max(0, elem.y);
     syncDOM(selectedId);
     scheduleSave();
+    // 連打時の履歴ノイズを抑えるため、最終押下から 500ms 経過後に 1 回 push
+    clearTimeout(arrowKeyTimer);
+    arrowKeyTimer = setTimeout(() => { arrowKeyTimer = null; pushHistory(); }, 500);
   }
 });
+
+// ── ホイールズーム（Ctrl+ホイールでマウス位置を中心に拡大縮小）──
+canvasEl.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const rect = canvasEl.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  // ズーム前のキャンバス座標
+  const cx = (mx - tx) / scale;
+  const cy = (my - ty) / scale;
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+  if (newScale === scale) return;
+  scale = newScale;
+  // マウス位置を不動点として補正
+  tx = mx - cx * scale;
+  ty = my - cy * scale;
+  applyTransform();
+}, { passive: false });
+
+// ── 画像の右クリックでコピー ──────────────────────────────────────
+canvasInnerEl.addEventListener('contextmenu', async e => {
+  const meEl = e.target.closest('.memo-image');
+  if (!meEl) return;
+  e.preventDefault();
+  const elem = getElem(meEl.dataset.id);
+  if (!elem || elem.type !== 'image') return;
+  try {
+    const blob = await dataUrlToPngBlob(elem.content);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    setStatus('saved', '画像をコピーしました');
+    setTimeout(() => setStatus('', '保存済み'), 2000);
+  } catch (err) {
+    setStatus('', 'コピー失敗: ' + err.message);
+    console.error(err);
+  }
+});
+
+async function dataUrlToPngBlob(dataUrl) {
+  // ClipboardItem は image/png が確実なので canvas で PNG 化する
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return await new Promise(r => c.toBlob(r, 'image/png'));
+}
+
+// ── Undo/Redo ボタン ──────────────────────────────────────────────
+btnUndo.addEventListener('click', undo);
+btnRedo.addEventListener('click', redo);
 
 // ── 画像貼り付け（Ctrl+V）────────────────────────────────────────
 document.addEventListener('paste', async e => {
@@ -415,14 +567,12 @@ document.addEventListener('drop', async e => {
   e.preventDefault();
   dragCounter = 0;
   dropOverlay.hidden = true;
-  const rect = canvasEl.getBoundingClientRect();
-  const dropX = e.clientX - rect.left;
-  const dropY = e.clientY - rect.top;
+  const { x: dropX, y: dropY } = screenToCanvas(e.clientX, e.clientY);
   const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
   let offsetX = 0;
   for (const file of files) {
     await insertImageFile(file, dropX + offsetX, dropY + offsetX);
-    offsetX += 20; // 複数枚は少しずらして配置
+    offsetX += 20; // 複数枚は少しずらして配置（論理座標）
   }
 });
 
@@ -444,18 +594,29 @@ async function insertImageFile(file, dropX, dropY) {
   }
   const dataUrl = await fileToDataURL(file);
 
-  // 自然サイズを取得してから追加
+  // 自然サイズを取得してから追加（ズーム中も視覚的に同じ割合に収まるよう論理座標で計算）
   const tmpImg = new Image();
   tmpImg.onload = () => {
-    const maxW = canvasEl.offsetWidth  * 0.45;
-    const maxH = canvasEl.offsetHeight * 0.70;
+    const maxW = (canvasEl.offsetWidth  / scale) * 0.45;
+    const maxH = (canvasEl.offsetHeight / scale) * 0.70;
     let w = tmpImg.naturalWidth;
     let h = tmpImg.naturalHeight;
     // 収まるように縮小
     if (w > maxW) { h = h * maxW / w; w = maxW; }
     if (h > maxH) { w = w * maxH / h; h = maxH; }
-    const x = dropX != null ? dropX - w / 2 : canvasEl.offsetWidth  / 2 - w / 2;
-    const y = dropY != null ? dropY - h / 2 : canvasEl.offsetHeight / 2 - h / 2;
+    let x, y;
+    if (dropX != null) {
+      x = dropX - w / 2;
+      y = dropY - h / 2;
+    } else {
+      // 表示中ビューポートの中心を論理座標で求める
+      const center = screenToCanvas(
+        canvasEl.getBoundingClientRect().left + canvasEl.offsetWidth  / 2,
+        canvasEl.getBoundingClientRect().top  + canvasEl.offsetHeight / 2
+      );
+      x = center.x - w / 2;
+      y = center.y - h / 2;
+    }
     const elem = addElement('image', Math.max(0, x), Math.max(0, y), Math.round(w), Math.round(h), dataUrl);
     selectEl(elem.id);
   };
@@ -520,6 +681,7 @@ btnClear.addEventListener('click', async () => {
   setStatus('saved', 'クリアしました');
   setTimeout(() => setStatus('', '保存済み'), 2000);
   updateInfo();
+  pushHistory();
 });
 
 // ── ステータス ────────────────────────────────────────────────────

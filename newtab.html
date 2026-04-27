@@ -25,6 +25,20 @@
       <span class="hint">ダブルクリック：テキスト追加　／　画像：Ctrl+V またはドロップ</span>
     </div>
     <div class="toolbar-actions">
+      <button id="btn-undo" class="btn" title="戻る (Ctrl+Z)" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 14L4 9l5-5"/>
+          <path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5h-4"/>
+        </svg>
+        戻る
+      </button>
+      <button id="btn-redo" class="btn" title="進む (Ctrl+Shift+Z)" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 14l5-5-5-5"/>
+          <path d="M20 9H9a5 5 0 0 0-5 5v0a5 5 0 0 0 5 5h4"/>
+        </svg>
+        進む
+      </button>
       <button id="btn-export-txt" class="btn" title="テキストのみ .txt で保存">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -51,7 +65,9 @@
   </header>
 
   <!-- キャンバス -->
-  <div id="canvas" class="canvas"></div>
+  <div id="canvas" class="canvas">
+    <div id="canvas-inner" class="canvas-inner"></div>
+  </div>
 
   <!-- ステータスバー -->
   <footer class="statusbar" id="statusbar">

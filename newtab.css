@@ -114,6 +114,18 @@ html, body {
   color: #fff;
 }
 
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn:disabled:hover,
+.btn[disabled]:hover {
+  background: var(--bg-tool);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 /* =====================
    キャンバス
 ======================== */
@@ -124,10 +136,17 @@ html, body {
   bottom: 28px;
   overflow: hidden;
   cursor: default;
-  /* ドットグリッド背景 */
+  /* ドットグリッド背景はビューポート側に固定（ズームしても基準として残す） */
   background-color: var(--bg);
   background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
   background-size: 24px 24px;
+}
+
+/* ズームを受ける内側ラッパ。要素はすべてここに append される */
+.canvas-inner {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
 }
 
 /* =====================
