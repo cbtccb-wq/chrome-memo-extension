@@ -302,3 +302,20 @@ html, body {
 
 .save-status.saving { color: var(--accent); }
 .save-status.saved  { color: #5cb85c; }
+
+.zoom-pill {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.zoom-pill:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}

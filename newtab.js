@@ -24,6 +24,7 @@ const btnRedo       = document.getElementById('btn-redo');
 const btnExportTxt  = document.getElementById('btn-export-txt');
 const btnExportHtml = document.getElementById('btn-export-html');
 const btnClear      = document.getElementById('btn-clear');
+const zoomPill      = document.getElementById('zoom-pill');
 
 // ── アプリ状態 ────────────────────────────────────────────────────
 let elements   = [];       // [{id, type, x, y, w, h, content}]
@@ -77,6 +78,14 @@ function screenToCanvas(clientX, clientY) {
 // ズーム/パンを transform に反映
 function applyTransform() {
   canvasInnerEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  zoomPill.textContent = `${Math.round(scale * 100)}%`;
+}
+
+function resetView() {
+  scale = 1;
+  tx = 0;
+  ty = 0;
+  applyTransform();
 }
 
 // ── Undo/Redo ─────────────────────────────────────────────────────
@@ -601,6 +610,9 @@ async function dataUrlToPngBlob(dataUrl) {
 // ── Undo/Redo ボタン ──────────────────────────────────────────────
 btnUndo.addEventListener('click', undo);
 btnRedo.addEventListener('click', redo);
+
+// ── ズームピル（クリックでビューリセット） ────────────────────────
+zoomPill.addEventListener('click', resetView);
 
 // ── 画像貼り付け（Ctrl+V）────────────────────────────────────────
 document.addEventListener('paste', async e => {
