@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Quick Memo",
-  "version": "2.0.0",
-  "description": "新しいタブをメモ帳に。テキスト・画像を自由に貼り付けて自動保存。",
+  "version": "2.1.0",
+  "description": "新しいタブを自由配置のメモキャンバスに。テキスト・画像をズーム/パン/複数選択しながら自動保存。",
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
