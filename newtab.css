@@ -37,6 +37,51 @@
   }
 }
 
+/* 手動テーマ上書き用 */
+html[data-theme="light"] {
+  --bg:        #f7f7f7;
+  --bg-tool:   #ffffff;
+  --text:      #1a1a1a;
+  --text-muted:#999;
+  --border:    #e0e0e0;
+  --accent:    #4a90d9;
+  --accent-bg: rgba(74,144,217,0.1);
+  --danger:    #e05252;
+  --el-bg:     #ffffff;
+  --el-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  --handle-bg: #ffffff;
+  --grid-dot:  #d8d8d8;
+}
+
+html[data-theme="dark"] {
+  --bg:        #1a1a1a;
+  --bg-tool:   #242424;
+  --text:      #e2e2e2;
+  --text-muted:#666;
+  --border:    #333;
+  --accent:    #5ba3e8;
+  --accent-bg: rgba(91,163,232,0.12);
+  --el-bg:     #2a2a2a;
+  --el-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  --handle-bg: #3a3a3a;
+  --grid-dot:  #2e2e2e;
+}
+
+html[data-theme="sepia"] {
+  --bg:        #f5ecd8;
+  --bg-tool:   #ebdcb9;
+  --text:      #433422;
+  --text-muted:#8d7c68;
+  --border:    #d5c3a6;
+  --accent:    #8c6239;
+  --accent-bg: rgba(140,98,57,0.12);
+  --danger:    #c84e4e;
+  --el-bg:     #fefcf9;
+  --el-shadow: 0 2px 8px rgba(67,52,34,0.12);
+  --handle-bg: #fefcf9;
+  --grid-dot:  #d0be9f;
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -131,15 +176,12 @@ html, body {
 ======================== */
 .canvas {
   position: fixed;
-  top: 44px;
+  top: 76px;
   left: 0; right: 0;
   bottom: 28px;
   overflow: hidden;
   cursor: default;
-  /* ドットグリッド背景はビューポート側に固定（ズームしても基準として残す） */
   background-color: var(--bg);
-  background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
-  background-size: 24px 24px;
 }
 
 /* パン中・Space 押下中のカーソル */
@@ -152,8 +194,14 @@ html, body {
 /* ズームを受ける内側ラッパ。要素はすべてここに append される */
 .canvas-inner {
   position: absolute;
-  inset: 0;
+  top: 0; left: 0;
+  width: 5000px;
+  height: 5000px;
   transform-origin: 0 0;
+  border: 1px dashed var(--border);
+  box-sizing: border-box;
+  background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
 }
 
 /* =====================
@@ -162,7 +210,7 @@ html, body {
 .memo-el {
   position: absolute;
   cursor: move;
-  border: 1.5px solid transparent;
+  border: 1.5px solid var(--border);
   border-radius: var(--radius);
   background: var(--el-bg);
   box-shadow: var(--el-shadow);
@@ -316,6 +364,12 @@ html, body {
 .save-status.saving { color: var(--accent); }
 .save-status.saved  { color: #5cb85c; }
 
+.statusbar-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .zoom-pill {
   font-family: var(--font);
   font-size: 11px;
@@ -330,5 +384,112 @@ html, body {
 .zoom-pill:hover {
   background: var(--accent-bg);
   border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* =====================
+   タブバー
+======================== */
+.tab-bar {
+  position: fixed;
+  top: 44px; left: 0; right: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  background: var(--bg-tool);
+  border-bottom: 1px solid var(--border);
+  z-index: 990;
+  padding: 0 12px;
+  gap: 8px;
+  user-select: none;
+}
+
+.tabs-container {
+  display: flex;
+  gap: 4px;
+  height: 100%;
+  align-items: flex-end;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.tabs-container::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+.tab-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 150px;
+  transition: background 0.15s, color 0.15s;
+  height: 26px;
+  box-sizing: border-box;
+}
+
+.tab-item:hover {
+  background: var(--accent-bg);
+  color: var(--text);
+}
+
+.tab-item.active {
+  background: var(--bg-tool);
+  color: var(--accent);
+  border-color: var(--border);
+  border-bottom: 1px solid var(--bg-tool);
+  margin-bottom: -1px;
+  font-weight: 600;
+  height: 27px;
+  z-index: 2;
+}
+
+.tab-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tab-close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-add-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-add-tab:hover {
+  background: var(--accent-bg);
   color: var(--accent);
 }

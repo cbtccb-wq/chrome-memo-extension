@@ -21,20 +21,34 @@ const infoEl        = document.getElementById('info');
 const saveEl        = document.getElementById('save-status');
 const btnUndo       = document.getElementById('btn-undo');
 const btnRedo       = document.getElementById('btn-redo');
+const btnTheme      = document.getElementById('btn-theme');
 const btnExportTxt  = document.getElementById('btn-export-txt');
 const btnExportHtml = document.getElementById('btn-export-html');
+const btnExportJson = document.getElementById('btn-export-json');
+const btnImportJson = document.getElementById('btn-import-json');
+const inputImport   = document.getElementById('input-import');
 const btnClear      = document.getElementById('btn-clear');
 const zoomPill      = document.getElementById('zoom-pill');
 const marqueeEl     = document.getElementById('marquee');
+const gridPill      = document.getElementById('grid-pill');
+const btnAddTab     = document.getElementById('btn-add-tab');
+const tabsContainer = document.getElementById('tabs-container');
 
 // ── アプリ状態 ────────────────────────────────────────────────────
 let elements    = [];       // [{id, type, x, y, w, h, content}]
+let config      = {
+  theme: 'system',
+  gridSize: 24,
+  tabs: [{ id: 'tab_default', name: 'メモ 1', scale: 1, tx: 0, ty: 0 }],
+  activeTabId: 'tab_default'
+};
 let domMap      = new Map();// id → DOM要素
+let gridSize    = 24;
+let tabHistories = new Map(); // tabId -> { history, historyIdx }
 let selectedIds = new Set();// 選択中の要素 ID（複数選択対応）
 let primaryId   = null;     // プライマリ選択（リサイズハンドルはこれだけ表示）
 let editingId   = null;
 let db;
-let zCounter    = 10;       // z-index管理
 
 // ドラッグ状態（複数選択をまとめて移動）
 let dragState  = null;
@@ -66,9 +80,6 @@ let arrowKeyTimer   = null;     // 矢印キー履歴コミットのデバウン
 // 要素のコピー&ペースト用（システムクリップボードとは別の内部バッファ）
 let elementClipboard = null;
 
-// グリッドスナップの粒度（CSS のドットグリッドと一致）
-const GRID = 24;
-
 // ── ユーティリティ ────────────────────────────────────────────────
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -98,6 +109,7 @@ function resetView() {
   tx = 0;
   ty = 0;
   applyTransform();
+  scheduleConfigSave();
 }
 
 // ── Undo/Redo ─────────────────────────────────────────────────────
@@ -132,6 +144,7 @@ function restoreSnapshot(snap) {
 }
 
 function undo() {
+  if (editingId) stopEditing();
   if (historyIdx <= 0) return;
   historyIdx--;
   restoreSnapshot(history[historyIdx]);
@@ -139,6 +152,7 @@ function undo() {
 }
 
 function redo() {
+  if (editingId) stopEditing();
   if (historyIdx >= history.length - 1) return;
   historyIdx++;
   restoreSnapshot(history[historyIdx]);
@@ -165,25 +179,220 @@ function openDB() {
   });
 }
 
-function dbSave(data) {
+function dbSave(data, key = 'main') {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(JSON.stringify(data), 'main');
+    tx.objectStore(STORE).put(JSON.stringify(data), key);
     tx.oncomplete = resolve;
     tx.onerror    = e => reject(e.target.error);
   });
 }
 
-function dbLoad() {
+function dbLoad(key = 'main') {
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).get('main');
+    const req = tx.objectStore(STORE).get(key);
     req.onsuccess = e => {
       try { resolve(JSON.parse(e.target.result || '[]')); }
       catch { resolve([]); }
     };
     req.onerror = e => reject(e.target.error);
   });
+}
+
+function dbSaveConfig(configData) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(JSON.stringify(configData), 'config');
+    tx.oncomplete = resolve;
+    tx.onerror    = e => reject(e.target.error);
+  });
+}
+
+function dbLoadConfig() {
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get('config');
+    req.onsuccess = e => {
+      try { resolve(JSON.parse(e.target.result || '{}')); }
+      catch { resolve({}); }
+    };
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else if (theme === 'sepia') {
+    document.documentElement.setAttribute('data-theme', 'sepia');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+
+let configSaveTimer = null;
+function scheduleConfigSave() {
+  clearTimeout(configSaveTimer);
+  configSaveTimer = setTimeout(async () => {
+    const currentTab = config.tabs.find(t => t.id === config.activeTabId);
+    if (currentTab) {
+      currentTab.scale = scale;
+      currentTab.tx = tx;
+      currentTab.ty = ty;
+    }
+    config.gridSize = gridSize;
+    try {
+      await dbSaveConfig(config);
+    } catch (err) {
+      console.error('設定の保存に失敗:', err);
+    }
+  }, 1000);
+}
+
+function applyGridStyle() {
+  if (gridSize === 0) {
+    canvasInnerEl.style.backgroundImage = 'none';
+  } else {
+    canvasInnerEl.style.backgroundImage = `radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px)`;
+    canvasInnerEl.style.backgroundSize = `${gridSize}px ${gridSize}px`;
+  }
+}
+
+function updateGridPill() {
+  if (gridSize === 0) {
+    gridPill.textContent = 'グリッド: なし';
+  } else {
+    gridPill.textContent = `グリッド: ${gridSize}px`;
+  }
+}
+
+function renderTabs() {
+  tabsContainer.innerHTML = '';
+  config.tabs.forEach(tab => {
+    const isActive = tab.id === config.activeTabId;
+    const div = document.createElement('div');
+    div.className = `tab-item${isActive ? ' active' : ''}`;
+    div.dataset.id = tab.id;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tab-name';
+    nameSpan.textContent = tab.name;
+    nameSpan.title = 'ダブルクリックで名前変更';
+    div.appendChild(nameSpan);
+
+    if (config.tabs.length > 1) {
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'tab-close';
+      closeBtn.textContent = '×';
+      closeBtn.title = 'ページを削除';
+      closeBtn.addEventListener('click', e => closeTab(tab.id, e));
+      div.appendChild(closeBtn);
+    }
+
+    div.addEventListener('click', () => switchTab(tab.id));
+    div.addEventListener('dblclick', () => renameTab(tab.id));
+
+    tabsContainer.appendChild(div);
+  });
+}
+
+function addTab() {
+  const tabId = 'tab_' + uid();
+  const newTab = { id: tabId, name: `メモ ${config.tabs.length + 1}`, scale: 1, tx: 0, ty: 0 };
+  config.tabs.push(newTab);
+  switchTab(tabId);
+}
+
+async function closeTab(tabId, event) {
+  event.stopPropagation();
+  if (config.tabs.length <= 1) {
+    flash('最後のページは削除できません');
+    return;
+  }
+  if (!confirm('このページを削除しますか？\n（ページ内のすべてのメモが消去されます）')) {
+    return;
+  }
+
+  const activeIdx = config.tabs.findIndex(t => t.id === config.activeTabId);
+  const targetIdx = config.tabs.findIndex(t => t.id === tabId);
+
+  let nextTabId = config.activeTabId;
+  if (tabId === config.activeTabId) {
+    const nextActive = config.tabs[targetIdx + 1] || config.tabs[targetIdx - 1];
+    nextTabId = nextActive.id;
+  }
+
+  config.tabs = config.tabs.filter(t => t.id !== tabId);
+
+  const deleteTx = db.transaction(STORE, 'readwrite');
+  deleteTx.objectStore(STORE).delete('elements_' + tabId);
+
+  tabHistories.delete(tabId);
+
+  if (tabId === config.activeTabId) {
+    await switchTab(nextTabId);
+  } else {
+    renderTabs();
+    await dbSaveConfig(config);
+  }
+}
+
+function renameTab(tabId) {
+  const tab = config.tabs.find(t => t.id === tabId);
+  if (!tab) return;
+  const newName = prompt('ページ名を入力してください:', tab.name);
+  if (newName && newName.trim()) {
+    tab.name = newName.trim().slice(0, 20);
+    renderTabs();
+    dbSaveConfig(config).catch(console.error);
+  }
+}
+
+async function switchTab(tabId) {
+  if (tabId === config.activeTabId) return;
+
+  flushSave();
+
+  const currentTab = config.tabs.find(t => t.id === config.activeTabId);
+  if (currentTab) {
+    currentTab.scale = scale;
+    currentTab.tx = tx;
+    currentTab.ty = ty;
+    tabHistories.set(config.activeTabId, { history, historyIdx });
+  }
+
+  config.activeTabId = tabId;
+  await dbSaveConfig(config);
+
+  domMap.forEach(el => el.remove());
+  domMap.clear();
+  selectedIds.clear();
+  primaryId = null;
+  editingId = null;
+
+  const saved = await dbLoad('elements_' + tabId);
+  elements = Array.isArray(saved) ? saved : [];
+  elements.forEach(elem => mountDOM(elem));
+
+  const newTab = config.tabs.find(t => t.id === tabId);
+  scale = newTab.scale ?? 1;
+  tx = newTab.tx ?? 0;
+  ty = newTab.ty ?? 0;
+  applyTransform();
+
+  const savedHist = tabHistories.get(tabId) || { history: [], historyIdx: -1 };
+  history = savedHist.history;
+  historyIdx = savedHist.historyIdx;
+  if (history.length === 0) {
+    pushHistory();
+  }
+  updateUndoRedoButtons();
+
+  renderTabs();
+  updateInfo();
 }
 
 // ── 自動保存 ──────────────────────────────────────────────────────
@@ -194,7 +403,7 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      await dbSave(elements);
+      await dbSave(elements, 'elements_' + config.activeTabId);
       setStatus('saved', '保存済み');
       setTimeout(() => setStatus('', '保存済み'), 2000);
     } catch(err) {
@@ -204,15 +413,79 @@ function scheduleSave() {
   }, SAVE_DELAY);
 }
 
+function flushSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    dbSave(elements, 'elements_' + config.activeTabId)
+      .then(() => setStatus('', '保存済み'))
+      .catch(err => {
+        setStatus('', 'エラー: 保存失敗');
+        console.error(err);
+      });
+  }
+}
+
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    flushSave();
+  }
+});
+
+window.addEventListener('pagehide', flushSave);
+
 // ── 起動時読み込み ────────────────────────────────────────────────
 (async () => {
   db = await openDB();
-  const saved = await dbLoad();
+
+  // 設定の読み込みと適用
+  const savedConfig = await dbLoadConfig();
+  const hasTabs = savedConfig.tabs && savedConfig.tabs.length > 0;
+
+  config = {
+    theme: 'system',
+    gridSize: 24,
+    tabs: [{ id: 'tab_default', name: 'メモ 1', scale: 1, tx: 0, ty: 0 }],
+    activeTabId: 'tab_default',
+    ...savedConfig
+  };
+
+  // 既存データ（main）からの移行処理
+  if (!hasTabs) {
+    const mainElements = await dbLoad('main');
+    if (mainElements && mainElements.length > 0) {
+      await dbSave(mainElements, 'elements_tab_default');
+      config.tabs[0].scale = savedConfig.scale || 1;
+      config.tabs[0].tx = savedConfig.tx || 0;
+      config.tabs[0].ty = savedConfig.ty || 0;
+      await dbSaveConfig(config);
+    }
+  }
+
+  // テーマとグリッドの適用
+  applyTheme(config.theme);
+  gridSize = config.gridSize ?? 24;
+  applyGridStyle();
+  updateGridPill();
+
+  // アクティブなタブの要素読み込みと復元
+  const activeTabId = config.activeTabId;
+  const saved = await dbLoad('elements_' + activeTabId);
   if (Array.isArray(saved)) {
     elements = saved;
     elements.forEach(e => mountDOM(e));
   }
+
+  // アクティブなタブのズーム/パン位置の復元
+  const activeTab = config.tabs.find(t => t.id === activeTabId) || config.tabs[0];
+  scale = activeTab.scale ?? 1;
+  tx = activeTab.tx ?? 0;
+  ty = activeTab.ty ?? 0;
+  applyTransform();
+
+  // タブバーの描画
+  renderTabs();
   updateInfo();
+
   // 初期状態を履歴の起点として記録
   pushHistory();
 })();
@@ -282,6 +555,24 @@ function syncDOM(id) {
   const elem = getElem(id);
   const div  = domMap.get(id);
   if (elem && div) applyPosStyle(div, elem);
+}
+
+function bringMultipleToFront(ids) {
+  if (!ids || !ids.length) return;
+  let changed = false;
+  for (const id of ids) {
+    const idx = elements.findIndex(e => e.id === id);
+    if (idx > -1) {
+      const [elem] = elements.splice(idx, 1);
+      elements.push(elem);
+      const div = domMap.get(id);
+      if (div && div.parentNode) {
+        div.parentNode.appendChild(div);
+      }
+      changed = true;
+    }
+  }
+  if (changed) scheduleSave();
 }
 
 // ── 要素操作 ──────────────────────────────────────────────────────
@@ -365,6 +656,7 @@ function finalizeMarquee(clientX, clientY) {
   const cMaxX = (maxSX - tx) / scale;
   const cMaxY = (maxSY - ty) / scale;
   if (!marqueeState.additive) clearSelection();
+  const newlySelected = [];
   for (const elem of elements) {
     const ex2 = elem.x + elem.w;
     const ey2 = elem.y + elem.h;
@@ -374,10 +666,13 @@ function finalizeMarquee(clientX, clientY) {
       const div = domMap.get(elem.id);
       if (div) {
         div.classList.add('selected');
-        div.style.zIndex = ++zCounter;
       }
+      newlySelected.push(elem.id);
       setPrimary(elem.id);
     }
+  }
+  if (newlySelected.length) {
+    bringMultipleToFront(newlySelected);
   }
 }
 
@@ -397,8 +692,8 @@ function selectEl(id, additive = false) {
       const div = domMap.get(id);
       if (div) {
         div.classList.add('selected');
-        div.style.zIndex = ++zCounter;
       }
+      bringMultipleToFront([id]);
       setPrimary(id);
     }
   } else {
@@ -409,8 +704,8 @@ function selectEl(id, additive = false) {
     const div = domMap.get(id);
     if (div) {
       div.classList.add('selected');
-      div.style.zIndex = ++zCounter;
     }
+    bringMultipleToFront([id]);
     setPrimary(id);
   }
 }
@@ -583,12 +878,12 @@ document.addEventListener('mousemove', e => {
     let dx = (e.clientX - dragState.startMX) / scale;
     let dy = (e.clientY - dragState.startMY) / scale;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.hasMoved = true;
-    // Shift 押下中はグリッド (24px) にスナップ。プライマリの最終位置を基準に丸める
-    if (e.shiftKey && primaryId) {
+    // グリッドサイズが設定されている場合はスナップ。Shift 押下中はスナップを無効化（フリードラッグ）
+    if (gridSize > 0 && !e.shiftKey && primaryId) {
       const ps = dragState.starts.get(primaryId);
       if (ps) {
-        const targetX = Math.max(0, Math.round((ps.x + dx) / GRID) * GRID);
-        const targetY = Math.max(0, Math.round((ps.y + dy) / GRID) * GRID);
+        const targetX = Math.max(0, Math.round((ps.x + dx) / gridSize) * gridSize);
+        const targetY = Math.max(0, Math.round((ps.y + dy) / gridSize) * gridSize);
         dx = targetX - ps.x;
         dy = targetY - ps.y;
       }
@@ -656,6 +951,7 @@ document.addEventListener('mouseup', e => {
   if (panState) {
     panState = null;
     canvasEl.classList.remove('panning');
+    scheduleConfigSave();
     return;
   }
   if (marqueeState) {
@@ -752,6 +1048,16 @@ window.addEventListener('blur', () => {
   }
 });
 
+// ドキュメントクリック時の編集終了
+document.addEventListener('mousedown', e => {
+  if (editingId) {
+    const activeEl = domMap.get(editingId);
+    if (activeEl && !activeEl.contains(e.target)) {
+      stopEditing();
+    }
+  }
+});
+
 // ── ホイールズーム（Ctrl+ホイールでマウス位置を中心に拡大縮小）──
 canvasEl.addEventListener('wheel', e => {
   if (!e.ctrlKey) return;
@@ -760,16 +1066,24 @@ canvasEl.addEventListener('wheel', e => {
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
   // ズーム前のキャンバス座標
-  const cx = (mx - tx) / scale;
-  const cy = (my - ty) / scale;
+  let cx = (mx - tx) / scale;
+  let cy = (my - ty) / scale;
+  // ズームの中心点をテーブル範囲内 (0〜5000) に制限して、範囲外を起点にした無駄な拡大縮小を防ぐ
+  cx = Math.max(0, Math.min(5000, cx));
+  cy = Math.max(0, Math.min(5000, cy));
+
+  const screenX = tx + cx * scale;
+  const screenY = ty + cy * scale;
+
   const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
   const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
   if (newScale === scale) return;
+
   scale = newScale;
-  // マウス位置を不動点として補正
-  tx = mx - cx * scale;
-  ty = my - cy * scale;
+  tx = screenX - cx * scale;
+  ty = screenY - cy * scale;
   applyTransform();
+  scheduleConfigSave();
 }, { passive: false });
 
 // ── 画像の右クリックでコピー ──────────────────────────────────────
@@ -805,6 +1119,50 @@ btnRedo.addEventListener('click', redo);
 
 // ── ズームピル（クリックでビューリセット） ────────────────────────
 zoomPill.addEventListener('click', resetView);
+
+// ── テーマ切り替え ────────────────────────────────────────────────
+btnTheme.addEventListener('click', () => {
+  let nextTheme = 'system';
+  if (config.theme === 'system') {
+    nextTheme = 'light';
+  } else if (config.theme === 'light') {
+    nextTheme = 'dark';
+  } else if (config.theme === 'dark') {
+    nextTheme = 'sepia';
+  } else {
+    nextTheme = 'system';
+  }
+  config.theme = nextTheme;
+  applyTheme(nextTheme);
+
+  let label = 'システム連動';
+  if (nextTheme === 'light') label = 'ライト';
+  if (nextTheme === 'dark') label = 'ダーク';
+  if (nextTheme === 'sepia') label = 'セピア';
+  flash(`テーマを ${label} に変更しました`);
+
+  dbSaveConfig(config).catch(err => console.error(err));
+});
+
+// ── グリッド切り替え ────────────────────────────────────────────────
+gridPill.addEventListener('click', () => {
+  if (gridSize === 24) {
+    gridSize = 12;
+  } else if (gridSize === 12) {
+    gridSize = 48;
+  } else if (gridSize === 48) {
+    gridSize = 0;
+  } else {
+    gridSize = 24;
+  }
+  config.gridSize = gridSize;
+  applyGridStyle();
+  updateGridPill();
+  dbSaveConfig(config).catch(err => console.error(err));
+});
+
+// ── 新規タブ追加 ──────────────────────────────────────────────────
+btnAddTab.addEventListener('click', addTab);
 
 // ── コピー&ペースト ──────────────────────────────────────────────
 document.addEventListener('copy', e => {
@@ -941,20 +1299,202 @@ btnExportTxt.addEventListener('click', () => {
 btnExportHtml.addEventListener('click', () => {
   if (!elements.length) { flash('メモが空です'); return; }
   const body = elements.map(e => {
-    const s = `position:absolute;left:${e.x}px;top:${e.y}px;width:${e.w}px;`;
+    const s = `left:${e.x}px;top:${e.y}px;width:${e.w}px;`;
     if (e.type === 'text') {
-      return `<div style="${s}min-height:${e.h}px;font-family:sans-serif;font-size:14px;line-height:1.75;white-space:pre-wrap;padding:8px 10px;">${escHtml(e.content)}</div>`;
+      return `<div class="card card-text" style="${s}min-height:${e.h}px;">${escHtml(e.content)}</div>`;
     } else {
-      return `<div style="${s}height:${e.h}px;"><img src="${e.content}" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+      return `<div class="card card-image" style="${s}height:${e.h}px;"><img src="${e.content}" /></div>`;
     }
   }).join('\n');
-  const maxX = Math.max(...elements.map(e => e.x + e.w), 800);
-  const maxY = Math.max(...elements.map(e => e.y + e.h), 600);
+  const maxX = Math.max(...elements.map(e => e.x + e.w), 800) + 100;
+  const maxY = Math.max(...elements.map(e => e.y + e.h), 600) + 100;
   const html = `<!DOCTYPE html>
-<html lang="ja"><head><meta charset="UTF-8"><title>Quick Memo エクスポート</title>
-<style>body{margin:0;background:#fff;position:relative;width:${maxX}px;height:${maxY}px;}</style>
-</head><body>${body}</body></html>`;
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Quick Memo エクスポート</title>
+  <style>
+    body {
+      margin: 0;
+      background: #f7f7f7;
+      position: relative;
+      width: ${maxX}px;
+      height: ${maxY}px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    }
+    .card {
+      position: absolute;
+      background: #ffffff;
+      border: 1.5px solid transparent;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+      box-sizing: border-box;
+    }
+    .card-text {
+      font-size: 14px;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      padding: 8px 10px;
+      color: #1a1a1a;
+    }
+    .card-image {
+      overflow: hidden;
+    }
+    .card-image img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1a1a; }
+      .card {
+        background: #2a2a2a;
+        border-color: #333333;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      }
+      .card-text { color: #e2e2e2; }
+    }
+  </style>
+</head>
+<body>
+  ${body}
+</body>
+</html>`;
   dl(new Blob([html], { type: 'text/html;charset=utf-8' }), `memo_${ts()}.html`);
+});
+
+btnExportJson.addEventListener('click', async () => {
+  if (!config.tabs || !config.tabs.length) { flash('データがありません'); return; }
+
+  const backupData = {
+    version: '2.4.0',
+    config: config,
+    tabElements: {}
+  };
+
+  try {
+    for (const tab of config.tabs) {
+      const tabElements = await dbLoad('elements_' + tab.id);
+      backupData.tabElements[tab.id] = tabElements;
+    }
+    backupData.elements = elements; // 後方互換性のためにアクティブな要素も入れる
+
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json;charset=utf-8' });
+    dl(blob, `quickmemo_backup_${ts()}.json`);
+  } catch (err) {
+    flash('エクスポートに失敗しました: ' + err.message);
+    console.error(err);
+  }
+});
+
+btnImportJson.addEventListener('click', () => {
+  inputImport.click();
+});
+
+inputImport.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async event => {
+    try {
+      const data = JSON.parse(event.target.result);
+      if (!data) {
+        throw new Error('インポート用データが空です');
+      }
+
+      let importedConfig = {};
+      let importedTabElements = {};
+
+      if (data.tabElements) {
+        importedTabElements = data.tabElements;
+        importedConfig = data.config || {};
+      } else if (Array.isArray(data.elements)) {
+        importedConfig = data.config || {};
+        importedConfig.tabs = [{ id: 'tab_default', name: 'インポートされたメモ', scale: importedConfig.scale || 1, tx: importedConfig.tx || 0, ty: importedConfig.ty || 0 }];
+        importedConfig.activeTabId = 'tab_default';
+        importedTabElements['tab_default'] = data.elements;
+      } else {
+        throw new Error('インポート用データの構造が正しくありません');
+      }
+
+      const confirmMsg = 'インポートを実行しますか？\nすべてのページとメモの内容が上書きされます。\n（インポート後も 戻る または Ctrl+Z で取り消せます）';
+      if (!confirm(confirmMsg)) {
+        inputImport.value = '';
+        return;
+      }
+
+      flushSave();
+
+      // データベース内の古い要素データを削除し、新しいデータを保存する処理を同一トランザクションで行う
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        if (config.tabs) {
+          for (const t of config.tabs) {
+            store.delete('elements_' + t.id);
+          }
+        }
+        for (const tabId in importedTabElements) {
+          store.put(JSON.stringify(importedTabElements[tabId]), 'elements_' + tabId);
+        }
+        tx.oncomplete = resolve;
+        tx.onerror = e => reject(e.target.error);
+      });
+
+      config = {
+        theme: 'system',
+        gridSize: 24,
+        tabs: [{ id: 'tab_default', name: 'メモ 1', scale: 1, tx: 0, ty: 0 }],
+        activeTabId: 'tab_default',
+        ...importedConfig
+      };
+
+      domMap.forEach(el => el.remove());
+      domMap.clear();
+      selectedIds.clear();
+      primaryId = null;
+      editingId = null;
+      tabHistories.clear();
+
+      await dbSaveConfig(config);
+
+      const activeTabId = config.activeTabId;
+      const activeElements = importedTabElements[activeTabId] || [];
+      elements = activeElements;
+      elements.forEach(elem => mountDOM(elem));
+
+      const activeTabObj = config.tabs.find(t => t.id === activeTabId) || config.tabs[0];
+      scale = activeTabObj.scale ?? 1;
+      tx = activeTabObj.tx ?? 0;
+      ty = activeTabObj.ty ?? 0;
+      applyTransform();
+
+      applyTheme(config.theme);
+      gridSize = config.gridSize ?? 24;
+      applyGridStyle();
+      updateGridPill();
+
+      updateInfo();
+      renderTabs();
+      pushHistory();
+
+      flash('インポートが完了しました');
+      inputImport.value = '';
+    } catch (err) {
+      flash('インポート失敗: ' + err.message);
+      console.error(err);
+      inputImport.value = '';
+    }
+  };
+  reader.onerror = () => {
+    flash('ファイルの読み込みに失敗しました');
+    inputImport.value = '';
+  };
+  reader.readAsText(file);
 });
 
 function escHtml(s) {
@@ -971,7 +1511,7 @@ btnClear.addEventListener('click', async () => {
   selectedIds.clear();
   primaryId = null;
   editingId = null;
-  await dbSave([]);
+  await dbSave([], 'elements_' + config.activeTabId);
   setStatus('saved', 'クリアしました');
   setTimeout(() => setStatus('', '保存済み'), 2000);
   updateInfo();

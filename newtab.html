@@ -39,6 +39,12 @@
         </svg>
         進む
       </button>
+      <button id="btn-theme" class="btn" title="テーマ切り替え (システム連動 / ライト / ダーク)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m11.314 11.314l.707.707M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/>
+        </svg>
+        テーマ
+      </button>
       <button id="btn-export-txt" class="btn" title="テキストのみ .txt で保存">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -54,6 +60,23 @@
         </svg>
         HTML
       </button>
+      <button id="btn-export-json" class="btn" title="データ全体を JSON でバックアップ">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        バックアップ
+      </button>
+      <button id="btn-import-json" class="btn" title="JSON からデータを復元">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        復元
+      </button>
+      <input type="file" id="input-import" accept=".json" style="display:none;">
       <button id="btn-clear" class="btn btn-danger" title="すべて削除">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="3 6 5 6 21 6"/>
@@ -64,6 +87,12 @@
     </div>
   </header>
 
+  <!-- タブバー -->
+  <div class="tab-bar" id="tab-bar">
+    <div class="tabs-container" id="tabs-container"></div>
+    <button id="btn-add-tab" class="btn-add-tab" title="新しいページを追加">+</button>
+  </div>
+
   <!-- キャンバス -->
   <div id="canvas" class="canvas">
     <div id="canvas-inner" class="canvas-inner"></div>
@@ -73,7 +102,10 @@
   <!-- ステータスバー -->
   <footer class="statusbar" id="statusbar">
     <span id="info" class="info"></span>
-    <button id="zoom-pill" class="zoom-pill" title="クリックで 100% にリセット">100%</button>
+    <div class="statusbar-controls">
+      <button id="grid-pill" class="zoom-pill" title="クリックでグリッド設定を切替 (24px → 12px → 48px → なし)">グリッド: 24px</button>
+      <button id="zoom-pill" class="zoom-pill" title="クリックで 100% にリセット">100%</button>
+    </div>
     <span id="save-status" class="save-status">保存済み</span>
   </footer>
 
