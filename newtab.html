@@ -14,7 +14,7 @@
         <circle cx="8.5" cy="8.5" r="1.5"/>
         <polyline points="21 15 16 10 5 21"/>
       </svg>
-      <p>画像をドロップ</p>
+      <p>画像 / テキストファイルをドロップ</p>
     </div>
   </div>
 
@@ -97,6 +97,13 @@
   <div id="canvas" class="canvas">
     <div id="canvas-inner" class="canvas-inner"></div>
     <div id="marquee" class="marquee" hidden></div>
+    <aside id="minimap" class="minimap" aria-label="全体プレビュー">
+      <button id="minimap-toggle" class="minimap-toggle" title="ミニマップを折りたたむ">全体</button>
+      <div id="minimap-stage" class="minimap-stage">
+        <div id="minimap-content" class="minimap-content"></div>
+        <div id="minimap-viewport" class="minimap-viewport"></div>
+      </div>
+    </aside>
   </div>
 
   <!-- ステータスバー -->
@@ -108,6 +115,97 @@
     </div>
     <span id="save-status" class="save-status">保存済み</span>
   </footer>
+
+  <!-- 検索バー -->
+  <div id="search-bar" class="search-bar" hidden>
+    <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="search-input" placeholder="テキストを検索..." autocomplete="off">
+    <span id="search-count" class="search-count">0 / 0</span>
+    <button id="btn-search-prev" class="btn-search-nav" title="前へ (Shift+Enter)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="18 15 12 9 6 15"/>
+      </svg>
+    </button>
+    <button id="btn-search-next" class="btn-search-nav" title="次へ (Enter)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
+    <button id="btn-search-close" class="btn-search-close" title="閉じる (Esc)">&times;</button>
+  </div>
+
+  <!-- サイズ変更ダイアログ -->
+  <dialog id="resize-dialog" class="resize-dialog-container">
+    <div class="modal-header">
+      <span class="modal-title">サイズ変更</span>
+      <button class="modal-close" id="resize-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="resize-row">
+        <label>幅 <input type="number" id="resize-w" min="10" max="4000"> px</label>
+        <label>高さ <input type="number" id="resize-h" min="10" max="4000"> px</label>
+        <label class="resize-lock"><input type="checkbox" id="resize-lock" checked> 縦横比を固定</label>
+      </div>
+      <div class="resize-presets">
+        <button class="preset-size-btn" data-factor="original">元サイズ</button>
+        <button class="preset-size-btn" data-factor="0.25">25%</button>
+        <button class="preset-size-btn" data-factor="0.5">50%</button>
+        <button class="preset-size-btn" data-factor="0.75">75%</button>
+        <button class="preset-size-btn" data-factor="1.5">150%</button>
+        <button class="preset-size-btn" data-factor="2">200%</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="resize-cancel" class="btn">キャンセル</button>
+      <button id="resize-ok" class="btn btn-accent">確定</button>
+    </div>
+  </dialog>
+
+  <!-- 画像編集ダイアログ -->
+  <dialog id="edit-dialog" class="edit-dialog">
+    <div class="edit-toolbar" id="edit-toolbar">
+      <div class="edit-tool-group">
+        <button class="edit-btn" id="et-rot-l" title="左回転90°">↺</button>
+        <button class="edit-btn" id="et-rot-r" title="右回転90°">↻</button>
+        <button class="edit-btn" id="et-flip-h" title="水平反転">⇆</button>
+        <button class="edit-btn" id="et-flip-v" title="垂直反転">⇅</button>
+      </div>
+      <div class="edit-tool-sep"></div>
+      <div class="edit-tool-group" id="et-tool-group">
+        <button class="edit-btn edit-tool active" data-tool="pen" title="ペン">✏</button>
+        <button class="edit-btn edit-tool" data-tool="circle" title="○">○</button>
+        <button class="edit-btn edit-tool" data-tool="rect" title="□">□</button>
+        <button class="edit-btn edit-tool" data-tool="triangle" title="△">△</button>
+        <button class="edit-btn edit-tool" data-tool="text" title="文字">T</button>
+        <button class="edit-btn edit-tool" data-tool="num" title="番号①-⑩">①</button>
+        <button class="edit-btn edit-tool" data-tool="crop" title="切り抜き">✂</button>
+      </div>
+      <div class="edit-tool-sep"></div>
+      <input type="color" id="et-color" value="#e05252" title="色">
+      <input type="range" id="et-line-width" min="1" max="30" value="3" title="線幅">
+      <input type="number" id="et-font-size" min="8" max="200" value="24" title="フォントサイズ(px)">
+      <select id="et-num-select" title="番号">
+        <option>①</option><option>②</option><option>③</option><option>④</option><option>⑤</option>
+        <option>⑥</option><option>⑦</option><option>⑧</option><option>⑨</option><option>⑩</option>
+      </select>
+      <div class="edit-tool-sep"></div>
+      <button class="edit-btn" id="et-crop-apply" disabled title="切り抜きを適用">切り抜き適用</button>
+      <div class="edit-tool-sep"></div>
+      <button class="edit-btn" id="et-undo" title="元に戻す" disabled>⟲</button>
+      <button class="edit-btn" id="et-redo" title="やり直し" disabled>⟳</button>
+      <div class="edit-tool-sep edit-tool-spacer"></div>
+      <button class="edit-btn edit-btn-danger" id="edit-cancel">キャンセル</button>
+      <button class="edit-btn edit-btn-accent" id="edit-ok">確定</button>
+    </div>
+    <div class="edit-canvas-wrap">
+      <canvas id="edit-canvas"></canvas>
+      <canvas id="edit-overlay"></canvas>
+      <textarea id="edit-text-overlay"></textarea>
+    </div>
+  </dialog>
 
   <script src="newtab.js"></script>
 </body>
