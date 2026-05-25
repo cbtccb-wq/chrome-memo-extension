@@ -8,7 +8,7 @@ const MAX_IMG    = 5 * 1024 * 1024;
 const SAVE_DELAY = 600;
 const MIN_W      = 80;
 const MIN_H      = 36;
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.8.0';
 const CANVAS_SIZE = 5000;
 const HANDLES    = ['nw','n','ne','e','se','s','sw','w'];
 const MIN_SCALE  = 0.25;
@@ -36,6 +36,8 @@ const marqueeEl     = document.getElementById('marquee');
 const gridPill      = document.getElementById('grid-pill');
 const btnAddTab     = document.getElementById('btn-add-tab');
 const tabsContainer = document.getElementById('tabs-container');
+const googleSearchForm  = document.getElementById('google-search-form');
+const googleSearchInput = document.getElementById('google-search-input');
 const minimapEl     = document.getElementById('minimap');
 const minimapToggle = document.getElementById('minimap-toggle');
 const minimapStage  = document.getElementById('minimap-stage');
@@ -112,6 +114,11 @@ function uid() {
 
 function getElem(id) {
   return elements.find(e => e.id === id);
+}
+
+function isInteractiveTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest('input, textarea, select, button, dialog, [contenteditable="true"]');
 }
 
 // 画面座標 → キャンバス（論理）座標
@@ -1298,10 +1305,20 @@ document.addEventListener('mouseup', e => {
 
 // ── キーボード ────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  const interactive = isInteractiveTarget(e.target);
+
   // Ctrl+F または Cmd+F で検索バーを表示
-  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+  if (!interactive && (e.ctrlKey || e.metaKey) && e.key === 'f') {
     e.preventDefault();
     openSearch();
+    return;
+  }
+
+  if (interactive) {
+    if (editingId && e.key === 'Escape' && domMap.get(editingId)?.contains(e.target)) {
+      e.preventDefault();
+      stopEditing();
+    }
     return;
   }
 
@@ -1640,6 +1657,14 @@ async function dataUrlToPngBlob(dataUrl) {
 btnUndo.addEventListener('click', undo);
 btnRedo.addEventListener('click', redo);
 
+// ── Google検索 ────────────────────────────────────────────────────
+googleSearchForm?.addEventListener('submit', e => {
+  e.preventDefault();
+  const query = googleSearchInput?.value.trim();
+  if (!query) return;
+  window.location.href = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+});
+
 // ── ズームピル（クリックでビューリセット） ────────────────────────
 zoomPill.addEventListener('click', resetView);
 
@@ -1706,7 +1731,7 @@ if (minimapStage) {
 
 // ── コピー&ペースト ──────────────────────────────────────────────
 document.addEventListener('copy', e => {
-  if (editingId || !selectedIds.size) return;
+  if (editingId || isInteractiveTarget(e.target) || !selectedIds.size) return;
   // 選択中の要素をすべて配列としてコピー
   elementClipboard = [...selectedIds].map(id => {
     const elem = getElem(id);
@@ -1719,7 +1744,7 @@ document.addEventListener('copy', e => {
 });
 
 document.addEventListener('paste', async e => {
-  if (editingId) return; // テキスト編集中は通常のペーストに任せる
+  if (editingId || isInteractiveTarget(e.target)) return; // 入力中は通常のペーストに任せる
   const items = [...(e.clipboardData?.items || [])];
   const imgItem = items.find(i => i.type.startsWith('image/'));
   // 1. システムクリップボードに画像があればそれを優先
@@ -1894,9 +1919,166 @@ function isSafeDataUrl(url) {
   return typeof url === 'string' && /^data:image\/[a-z+]+;base64,/i.test(url);
 }
 
+function clampNum(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function sanitizeTabId(value, fallback) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : fallback;
+}
+
+function uniqueId(base, used, fallbackPrefix) {
+  let candidate = base || `${fallbackPrefix}_${uid()}`;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    candidate = `${base || fallbackPrefix}_${suffix++}`;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function sanitizeTabName(value, fallback) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  return (name || fallback).slice(0, 20);
+}
+
+function sanitizeTheme(value) {
+  return ['system', 'light', 'dark', 'sepia'].includes(value) ? value : 'system';
+}
+
+function sanitizeGridSize(value) {
+  const n = Number(value);
+  return [0, 12, 24, 48].includes(n) ? n : 24;
+}
+
+function sanitizeElement(raw, usedIds) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.type !== 'text' && raw.type !== 'image') return null;
+
+  const minW = raw.type === 'text' ? MIN_W : 10;
+  const minH = raw.type === 'text' ? MIN_H : 10;
+  const id = uniqueId(
+    sanitizeTabId(raw.id, `el_${uid()}`),
+    usedIds,
+    'el'
+  );
+  const w = Math.round(clampNum(raw.w, minW, CANVAS_SIZE, raw.type === 'text' ? 200 : 100));
+  const h = Math.round(clampNum(raw.h, minH, CANVAS_SIZE, raw.type === 'text' ? MIN_H : 100));
+  const elem = {
+    id,
+    type: raw.type,
+    x: Math.round(clampNum(raw.x, 0, CANVAS_SIZE - minW, 0)),
+    y: Math.round(clampNum(raw.y, 0, CANVAS_SIZE - minH, 0)),
+    w,
+    h,
+    content: ''
+  };
+
+  if (raw.type === 'image') {
+    if (!isSafeDataUrl(raw.content)) return null;
+    elem.content = raw.content;
+  } else {
+    elem.content = typeof raw.content === 'string' ? raw.content : String(raw.content ?? '');
+  }
+
+  if (raw.bgColor && CARD_COLORS.some(c => c.value === raw.bgColor)) elem.bgColor = raw.bgColor;
+  if (raw.locked === true) elem.locked = true;
+  return elem;
+}
+
+function sanitizeElementList(value) {
+  if (!Array.isArray(value)) return [];
+  const usedIds = new Set();
+  return value.map(e => sanitizeElement(e, usedIds)).filter(Boolean);
+}
+
+function normalizeImportData(data) {
+  if (!data || typeof data !== 'object') {
+    throw new Error('インポート用データが空です');
+  }
+
+  let rawConfig = data.config && typeof data.config === 'object' ? data.config : {};
+  let rawTabElements = {};
+
+  if (data.tabElements && typeof data.tabElements === 'object' && !Array.isArray(data.tabElements)) {
+    rawTabElements = data.tabElements;
+  } else if (Array.isArray(data.elements)) {
+    rawConfig = {
+      ...rawConfig,
+      tabs: [{ id: 'tab_default', name: 'インポートされたメモ', scale: rawConfig.scale || 1, tx: rawConfig.tx || 0, ty: rawConfig.ty || 0 }],
+      activeTabId: 'tab_default'
+    };
+    rawTabElements.tab_default = data.elements;
+  } else {
+    throw new Error('インポート用データの構造が正しくありません');
+  }
+
+  const elementKeys = Object.keys(rawTabElements);
+  const rawTabs = Array.isArray(rawConfig.tabs) && rawConfig.tabs.length
+    ? rawConfig.tabs
+    : elementKeys.map((id, idx) => ({ id, name: `メモ ${idx + 1}`, scale: 1, tx: 0, ty: 0 }));
+
+  if (!rawTabs.length) throw new Error('インポートできるページがありません');
+
+  const usedTabIds = new Set();
+  const tabIdMap = new Map();
+  const tabs = rawTabs.map((tab, idx) => {
+    const sourceId = typeof tab?.id === 'string' ? tab.id : `tab_import_${idx + 1}`;
+    const fallbackId = `tab_import_${idx + 1}`;
+    const id = uniqueId(sanitizeTabId(sourceId, fallbackId), usedTabIds, 'tab_import');
+    tabIdMap.set(sourceId, id);
+    return {
+      id,
+      name: sanitizeTabName(tab?.name, `メモ ${idx + 1}`),
+      scale: clampNum(tab?.scale, MIN_SCALE, MAX_SCALE, 1),
+      tx: clampNum(tab?.tx, -CANVAS_SIZE * MAX_SCALE, CANVAS_SIZE, 0),
+      ty: clampNum(tab?.ty, -CANVAS_SIZE * MAX_SCALE, CANVAS_SIZE, 0)
+    };
+  });
+
+  const tabElements = {};
+  rawTabs.forEach((tab, idx) => {
+    const sourceId = typeof tab?.id === 'string' ? tab.id : `tab_import_${idx + 1}`;
+    const targetId = tabs[idx].id;
+    const rawElements = rawTabElements[sourceId] ?? rawTabElements[targetId] ?? [];
+    tabElements[targetId] = sanitizeElementList(rawElements);
+  });
+
+  const activeSourceId = typeof rawConfig.activeTabId === 'string' ? rawConfig.activeTabId : '';
+  const activeTabId = tabIdMap.get(activeSourceId) || tabs[0].id;
+
+  return {
+    config: {
+      theme: sanitizeTheme(rawConfig.theme),
+      gridSize: sanitizeGridSize(rawConfig.gridSize),
+      tabs,
+      activeTabId
+    },
+    tabElements
+  };
+}
+
+function sanitizeExportElement(raw) {
+  if (!raw || (raw.type !== 'text' && raw.type !== 'image')) return null;
+  const minW = raw.type === 'text' ? MIN_W : 10;
+  const minH = raw.type === 'text' ? MIN_H : 10;
+  return {
+    type: raw.type,
+    x: Math.round(clampNum(raw.x, 0, CANVAS_SIZE - minW, 0)),
+    y: Math.round(clampNum(raw.y, 0, CANVAS_SIZE - minH, 0)),
+    w: Math.round(clampNum(raw.w, minW, CANVAS_SIZE, minW)),
+    h: Math.round(clampNum(raw.h, minH, CANVAS_SIZE, minH)),
+    content: raw.type === 'text' ? String(raw.content ?? '') : raw.content
+  };
+}
+
 btnExportHtml.addEventListener('click', () => {
   if (!elements.length) { flash('メモが空です'); return; }
-  const body = elements.map(e => {
+  const exportElements = elements.map(sanitizeExportElement).filter(Boolean);
+  const body = exportElements.map(e => {
     const s = `left:${e.x}px;top:${e.y}px;width:${e.w}px;`;
     if (e.type === 'text') {
       return `<div class="card card-text" style="${s}min-height:${e.h}px;">${escHtml(e.content)}</div>`;
@@ -1906,8 +2088,8 @@ btnExportHtml.addEventListener('click', () => {
       return `<div class="card card-image" style="${s}height:${e.h}px;"><img src="${safeSrc}" /></div>`;
     }
   }).join('\n');
-  const maxX = Math.max(...elements.map(e => e.x + e.w), 800) + 100;
-  const maxY = Math.max(...elements.map(e => e.y + e.h), 600) + 100;
+  const maxX = Math.max(...exportElements.map(e => e.x + e.w), 800) + 100;
+  const maxY = Math.max(...exportElements.map(e => e.y + e.h), 600) + 100;
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -2008,20 +2190,9 @@ inputImport.addEventListener('change', e => {
         throw new Error('インポート用データが空です');
       }
 
-      let importedConfig = {};
-      let importedTabElements = {};
-
-      if (data.tabElements) {
-        importedTabElements = data.tabElements;
-        importedConfig = data.config || {};
-      } else if (Array.isArray(data.elements)) {
-        importedConfig = data.config || {};
-        importedConfig.tabs = [{ id: 'tab_default', name: 'インポートされたメモ', scale: importedConfig.scale || 1, tx: importedConfig.tx || 0, ty: importedConfig.ty || 0 }];
-        importedConfig.activeTabId = 'tab_default';
-        importedTabElements['tab_default'] = data.elements;
-      } else {
-        throw new Error('インポート用データの構造が正しくありません');
-      }
+      const normalizedImport = normalizeImportData(data);
+      const importedConfig = normalizedImport.config;
+      const importedTabElements = normalizedImport.tabElements;
 
       const ok = await showConfirm('インポートを実行しますか？\nすべてのページとメモの内容が上書きされます。\n\n※ インポート実行前にバックアップが自動ダウンロードされます。');
       if (!ok) {
@@ -2114,7 +2285,7 @@ inputImport.addEventListener('change', e => {
 });
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ── クリア ────────────────────────────────────────────────────────

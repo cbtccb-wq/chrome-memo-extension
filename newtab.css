@@ -120,6 +120,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   z-index: 1000;
   user-select: none;
+  min-width: 0;
 }
 
 .logo {
@@ -131,11 +132,55 @@ html, body {
 
 .toolbar-center {
   flex: 1;
-  text-align: center;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
 .hint {
   font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.google-search {
+  width: min(420px, 46vw);
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.google-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+  color: var(--accent);
+}
+
+.google-search-icon {
+  flex-shrink: 0;
+}
+
+#google-search-input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+}
+
+#google-search-input::placeholder {
   color: var(--text-muted);
 }
 
@@ -143,7 +188,11 @@ html, body {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.toolbar-actions::-webkit-scrollbar { display: none; }
 
 .btn {
   display: inline-flex;
@@ -184,6 +233,27 @@ html, body {
   background: var(--bg-tool);
   border-color: var(--border);
   color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  .hint { display: none; }
+  .google-search { width: min(360px, 42vw); }
+}
+
+@media (max-width: 820px) {
+  .toolbar {
+    padding: 0 8px;
+    gap: 8px;
+  }
+  .toolbar-center {
+    min-width: 150px;
+    justify-content: flex-start;
+  }
+  .google-search { width: min(260px, 34vw); }
+  .btn {
+    padding: 5px 7px;
+    font-size: 11px;
+  }
 }
 
 /* =====================

@@ -22,7 +22,14 @@
   <header class="toolbar" id="toolbar">
     <h1 class="logo">Quick Memo</h1>
     <div class="toolbar-center">
-      <span class="hint">ダブルクリック：テキスト追加　／　画像：Ctrl+V またはドロップ</span>
+      <form id="google-search-form" class="google-search" role="search">
+        <svg class="google-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input id="google-search-input" type="search" placeholder="Google で検索" autocomplete="off" aria-label="Google で検索">
+      </form>
+      <span class="hint">ダブルクリック：テキスト追加 / 画像：Ctrl+V またはドロップ</span>
     </div>
     <div class="toolbar-actions">
       <button id="btn-undo" class="btn" title="戻る (Ctrl+Z)" disabled>
