@@ -8,13 +8,16 @@ const MAX_IMG    = 5 * 1024 * 1024;
 const SAVE_DELAY = 600;
 const MIN_W      = 80;
 const MIN_H      = 36;
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const CANVAS_SIZE = 5000;
 const HANDLES    = ['nw','n','ne','e','se','s','sw','w'];
 const MIN_SCALE  = 0.25;
-const MAX_SCALE  = 4;
+const MAX_SCALE  = 8;
 const HISTORY_MAX = 50;
 const GUIDE_THRESHOLD = 6;
+const GRID_SIZES = [24, 12, 6, 3, 48, 0];
+const MAX_COPY_CANVAS_PIXELS = 16 * 1024 * 1024;
+const MAX_COPY_CANVAS_SIDE = 8192;
 
 // ── DOM refs ──────────────────────────────────────────────────────
 const canvasEl      = document.getElementById('canvas');
@@ -102,6 +105,7 @@ let arrowKeyTimer   = null;     // 矢印キー履歴コミットのデバウン
 
 // 要素のコピー&ペースト用（システムクリップボードとは別の内部バッファ）
 let elementClipboard = null;
+let copiedImageSize = null;
 let tabDragId = null;
 let tabPointerDrag = null;
 let suppressTabClick = false;
@@ -128,6 +132,28 @@ function screenToCanvas(clientX, clientY) {
     x: (clientX - rect.left - tx) / scale,
     y: (clientY - rect.top  - ty) / scale,
   };
+}
+
+function clampCanvasValue(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function snapToGrid(value) {
+  if (gridSize <= 0) return value;
+  return Math.round(value / gridSize) * gridSize;
+}
+
+function addTextAtCanvas(x, y) {
+  const elem = addElement(
+    'text',
+    clampCanvasValue(x - 100, 0, CANVAS_SIZE - MIN_W),
+    clampCanvasValue(y - 20, 0, CANVAS_SIZE - MIN_H),
+    200,
+    MIN_H,
+    ''
+  );
+  selectEl(elem.id);
+  startEditing(elem.id);
 }
 
 // ズーム/パンを transform に反映
@@ -319,6 +345,15 @@ function updateGridPill() {
   } else {
     gridPill.textContent = `グリッド: ${gridSize}px`;
   }
+}
+
+function cycleGridSize() {
+  const currentIdx = GRID_SIZES.indexOf(gridSize);
+  gridSize = GRID_SIZES[(currentIdx + 1) % GRID_SIZES.length] ?? GRID_SIZES[0];
+  config.gridSize = gridSize;
+  applyGridStyle();
+  updateGridPill();
+  dbSaveConfig(config).catch(err => console.error(err));
 }
 
 function renderTabs() {
@@ -685,6 +720,7 @@ function buildElement(elem) {
         e.content = inner.textContent;
         e.h = Math.max(MIN_H, div.offsetHeight);
         scheduleSave();
+        scheduleBackupSizeInfoUpdate();
       }
     });
   } else {
@@ -1173,9 +1209,7 @@ canvasEl.addEventListener('dblclick', e => {
   // 空白ダブルクリック → テキストボックス新規作成
   if (!meEl) {
     const { x: cx, y: cy } = screenToCanvas(e.clientX, e.clientY);
-    const elem = addElement('text', Math.max(0, cx - 100), Math.max(0, cy - 20), 200, MIN_H, '');
-    selectEl(elem.id);
-    startEditing(elem.id);
+    addTextAtCanvas(cx, cy);
   }
 });
 
@@ -1247,11 +1281,15 @@ document.addEventListener('mousemove', e => {
     const dx = (e.clientX - startMX) / scale;
     const dy = (e.clientY - startMY) / scale;
     let x = startX, y = startY, w = startW, h = startH;
+    const elem = getElem(resizeState.id);
+    if (!elem) return;
+    const minW = elem.type === 'image' ? 10 : MIN_W;
+    const minH = elem.type === 'image' ? 10 : MIN_H;
 
-    if (handle.includes('e')) { w = Math.max(MIN_W, startW + dx); }
-    if (handle.includes('s')) { h = Math.max(MIN_H, startH + dy); }
-    if (handle.includes('w')) { w = Math.max(MIN_W, startW - dx); x = startX + startW - w; }
-    if (handle.includes('n')) { h = Math.max(MIN_H, startH - dy); y = startY + startH - h; }
+    if (handle.includes('e')) { w = Math.max(minW, startW + dx); }
+    if (handle.includes('s')) { h = Math.max(minH, startH + dy); }
+    if (handle.includes('w')) { w = Math.max(minW, startW - dx); x = startX + startW - w; }
+    if (handle.includes('n')) { h = Math.max(minH, startH - dy); y = startY + startH - h; }
 
     // Shift+コーナーハンドルで縦横比を固定
     const isCorner = handle.length === 2;
@@ -1269,7 +1307,50 @@ document.addEventListener('mousemove', e => {
       if (handle.includes('n')) y = startY + startH - h;
     }
 
-    const elem = getElem(resizeState.id);
+    if (gridSize > 0) {
+      const right = startX + startW;
+      const bottom = startY + startH;
+      const aspect = startW / startH;
+      const snapHorizontal = Math.abs(w - startW) / startW >= Math.abs(h - startH) / startH;
+
+      if (isCorner && e.shiftKey) {
+        if (snapHorizontal) {
+          if (handle.includes('e')) {
+            w = Math.max(minW, snapToGrid(x + w) - x);
+          } else {
+            x = clampCanvasValue(snapToGrid(x), 0, right - minW);
+            w = Math.max(minW, right - x);
+          }
+          h = Math.max(minH, w / aspect);
+          if (handle.includes('n')) y = bottom - h;
+        } else {
+          if (handle.includes('s')) {
+            h = Math.max(minH, snapToGrid(y + h) - y);
+          } else {
+            y = clampCanvasValue(snapToGrid(y), 0, bottom - minH);
+            h = Math.max(minH, bottom - y);
+          }
+          w = Math.max(minW, h * aspect);
+          if (handle.includes('w')) x = right - w;
+        }
+      } else {
+        if (handle.includes('e')) w = Math.max(minW, snapToGrid(x + w) - x);
+        if (handle.includes('s')) h = Math.max(minH, snapToGrid(y + h) - y);
+        if (handle.includes('w')) {
+          x = clampCanvasValue(snapToGrid(x), 0, right - minW);
+          w = Math.max(minW, right - x);
+        }
+        if (handle.includes('n')) {
+          y = clampCanvasValue(snapToGrid(y), 0, bottom - minH);
+          h = Math.max(minH, bottom - y);
+        }
+      }
+    }
+
+    x = clampCanvasValue(x, 0, CANVAS_SIZE - minW);
+    y = clampCanvasValue(y, 0, CANVAS_SIZE - minH);
+    w = Math.min(CANVAS_SIZE - x, Math.max(minW, w));
+    h = Math.min(CANVAS_SIZE - y, Math.max(minH, h));
     elem.x = x; elem.y = y; elem.w = w; elem.h = h;
     syncDOM(resizeState.id);
     updateMinimap();
@@ -1301,6 +1382,7 @@ document.addEventListener('mouseup', e => {
   resizeState = null;
   hideSnapGuides();
   if (dragChanged || resizeChanged) pushHistory();
+  if (resizeChanged) updateInfo();
 });
 
 // ── キーボード ────────────────────────────────────────────────────
@@ -1428,9 +1510,9 @@ document.addEventListener('mousedown', e => {
   }
 });
 
-// ── ホイールズーム（Ctrl+ホイールでマウス位置を中心に拡大縮小）──
+// ── ホイールズーム（ホイール単独でマウス位置を中心に拡大縮小）──
 canvasEl.addEventListener('wheel', e => {
-  if (!e.ctrlKey) return;
+  if (editingId || isInteractiveTarget(e.target)) return;
   e.preventDefault();
   const rect = canvasEl.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -1466,20 +1548,239 @@ function hideContextMenu() {
   }
 }
 
+function createContextMenu() {
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.addEventListener('mousedown', e => e.stopPropagation());
+  return menu;
+}
+
+function addContextMenuItem(menu, text, onClick, options = {}) {
+  const item = document.createElement('div');
+  item.className = 'context-menu-item';
+  item.textContent = text;
+  if (options.disabled) {
+    item.classList.add('disabled');
+  } else {
+    item.addEventListener('click', async () => {
+      hideContextMenu();
+      try {
+        await onClick();
+      } catch (err) {
+        flash('操作に失敗しました: ' + err.message);
+        console.error(err);
+      }
+    });
+  }
+  menu.appendChild(item);
+  return item;
+}
+
+function addContextMenuSeparator(menu) {
+  const sep = document.createElement('div');
+  sep.className = 'context-menu-separator';
+  menu.appendChild(sep);
+}
+
+function placeContextMenu(menu, clientX, clientY) {
+  const canvasRect = canvasEl.getBoundingClientRect();
+  menu.style.left = (clientX - canvasRect.left) + 'px';
+  menu.style.top  = (clientY - canvasRect.top) + 'px';
+  canvasEl.appendChild(menu);
+  activeContextMenu = menu;
+
+  requestAnimationFrame(() => {
+    const menuRect = menu.getBoundingClientRect();
+    if (menuRect.right > canvasRect.right - 8) {
+      menu.style.left = Math.max(4, (clientX - canvasRect.left - menuRect.width)) + 'px';
+    }
+    if (menuRect.bottom > canvasRect.bottom - 8) {
+      menu.style.top = Math.max(4, (clientY - canvasRect.top - menuRect.height)) + 'px';
+    }
+  });
+}
+
+function pasteElementClipboardAt(x, y) {
+  if (!elementClipboard?.length) return false;
+  const minX = Math.min(...elementClipboard.map(e => e.x));
+  const minY = Math.min(...elementClipboard.map(e => e.y));
+  clearSelection();
+  const defs = elementClipboard.map(c => ({
+    type: c.type,
+    x: clampCanvasValue(x + c.x - minX, 0, CANVAS_SIZE - 10),
+    y: clampCanvasValue(y + c.y - minY, 0, CANVAS_SIZE - 10),
+    w: c.w,
+    h: c.h,
+    content: c.content,
+    bgColor: c.bgColor,
+    locked: c.locked
+  }));
+  const added = addElementsBatch(defs);
+  for (const el of added) selectEl(el.id, true);
+  return true;
+}
+
+async function pasteAtCanvasPoint(x, y) {
+  if (navigator.clipboard?.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find(type => type.startsWith('image/'));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        await insertImageFile(blob, x, y);
+        return;
+      }
+    } catch (err) {
+      console.warn('クリップボード画像の読み取りに失敗:', err);
+    }
+  }
+
+  if (pasteElementClipboardAt(x, y)) return;
+  flash('貼り付けできる画像またはコピー済み要素がありません');
+}
+
+function copyImageSize(elem) {
+  copiedImageSize = { w: Math.round(elem.w), h: Math.round(elem.h) };
+  flash(`画像サイズをコピーしました (${copiedImageSize.w} x ${copiedImageSize.h})`);
+}
+
+function applyCopiedImageSize(id) {
+  if (!copiedImageSize) {
+    flash('先に画像サイズをコピーしてください');
+    return;
+  }
+
+  const targets = selectedIds.has(id) && selectedIds.size > 1
+    ? [...selectedIds]
+    : [id];
+  const images = targets
+    .map(tid => getElem(tid))
+    .filter(elem => elem?.type === 'image' && !elem.locked);
+
+  if (!images.length) {
+    flash('サイズを反映できる画像がありません');
+    return;
+  }
+
+  for (const elem of images) {
+    elem.w = copiedImageSize.w;
+    elem.h = copiedImageSize.h;
+    syncDOM(elem.id);
+  }
+  scheduleSave();
+  pushHistory();
+  updateInfo();
+  updateMinimap();
+  flash(images.length > 1 ? `${images.length} 枚の画像サイズを揃えました` : '画像サイズを反映しました');
+}
+
+function getImageCopyTargets(clickedId) {
+  if (selectedIds.has(clickedId) && selectedIds.size > 1) {
+    const targetIds = new Set(selectedIds);
+    return elements.filter(elem => targetIds.has(elem.id) && elem.type === 'image');
+  }
+  const elem = getElem(clickedId);
+  return elem?.type === 'image' ? [elem] : [];
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+    img.src = src;
+  });
+}
+
+async function canvasToPngBlob(canvas) {
+  return await new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error('PNG化に失敗しました'));
+    }, 'image/png');
+  });
+}
+
+async function copySelectedImagesAsPng(clickedId) {
+  const targets = getImageCopyTargets(clickedId);
+  if (!targets.length) {
+    flash('コピーできる画像がありません');
+    return;
+  }
+
+  if (targets.length === 1) {
+    const blob = await dataUrlToPngBlob(targets[0].content);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    flash('画像をコピーしました');
+    return;
+  }
+
+  const minX = Math.min(...targets.map(elem => elem.x));
+  const minY = Math.min(...targets.map(elem => elem.y));
+  const maxX = Math.max(...targets.map(elem => elem.x + elem.w));
+  const maxY = Math.max(...targets.map(elem => elem.y + elem.h));
+  const width = Math.ceil(maxX - minX);
+  const height = Math.ceil(maxY - minY);
+
+  if (
+    width < 1 ||
+    height < 1 ||
+    width > MAX_COPY_CANVAS_SIDE ||
+    height > MAX_COPY_CANVAS_SIDE ||
+    width * height > MAX_COPY_CANVAS_PIXELS
+  ) {
+    flash('コピー範囲が大きすぎます。画像を近づけるか枚数を減らしてください');
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  for (const elem of targets) {
+    const img = await loadImage(elem.content);
+    ctx.drawImage(img, elem.x - minX, elem.y - minY, elem.w, elem.h);
+  }
+
+  const blob = await canvasToPngBlob(canvas);
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  flash(`${targets.length} 枚の画像をまとめてコピーしました`);
+}
+
 // 他の場所をクリックしたらコンテキストメニューを閉じる
 document.addEventListener('mousedown', e => {
   if (activeContextMenu?.contains(e.target)) return;
   hideContextMenu();
 });
 
-canvasInnerEl.addEventListener('contextmenu', async e => {
+canvasEl.addEventListener('contextmenu', async e => {
   // テキスト編集中はブラウザ既定の右クリックメニュー（コピー・ペースト等）を優先する
   if (editingId) return;
+  if (activeContextMenu?.contains(e.target)) return;
 
   const meEl = e.target.closest('.memo-el');
-  if (!meEl) return;
   e.preventDefault();
   hideContextMenu();
+  const rawPoint = screenToCanvas(e.clientX, e.clientY);
+  const canvasPoint = {
+    x: clampCanvasValue(rawPoint.x, 0, CANVAS_SIZE),
+    y: clampCanvasValue(rawPoint.y, 0, CANVAS_SIZE)
+  };
+  const menu = createContextMenu();
+
+  if (!meEl) {
+    addContextMenuItem(menu, '📝 ここにテキスト追加', () => addTextAtCanvas(canvasPoint.x, canvasPoint.y));
+    addContextMenuItem(menu, '📌 ここに貼り付け', () => pasteAtCanvasPoint(canvasPoint.x, canvasPoint.y));
+    addContextMenuSeparator(menu);
+    addContextMenuItem(menu, '🔎 表示をリセット', () => resetView());
+    addContextMenuItem(menu, 'グリッド切替', () => {
+      cycleGridSize();
+      flash(gridSize === 0 ? 'グリッドをオフにしました' : `グリッドを ${gridSize}px にしました`);
+    });
+    placeContextMenu(menu, e.clientX, e.clientY);
+    return;
+  }
 
   const id = meEl.dataset.id;
   const elem = getElem(id);
@@ -1488,71 +1789,35 @@ canvasInnerEl.addEventListener('contextmenu', async e => {
   // 選択状態にする
   if (!selectedIds.has(id)) selectEl(id);
 
-  // コンテキストメニューを構築
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.addEventListener('mousedown', e => e.stopPropagation());
-
   // テキスト要素の場合: 編集ボタン
   if (elem.type === 'text' && !elem.locked) {
-    const editBtn = document.createElement('div');
-    editBtn.className = 'context-menu-item';
-    editBtn.textContent = '📝 編集';
-    editBtn.addEventListener('click', () => {
-      hideContextMenu();
-      startEditing(id);
-    });
-    menu.appendChild(editBtn);
+    addContextMenuItem(menu, '📝 編集', () => startEditing(id));
   }
 
   // 画像要素の場合: コピーボタン、サイズ変更ボタン、編集ボタン
   if (elem.type === 'image') {
-    const copyBtn = document.createElement('div');
-    copyBtn.className = 'context-menu-item';
-    copyBtn.textContent = '\uD83D\uDCCB 画像をコピー';
-    copyBtn.addEventListener('click', async () => {
-      hideContextMenu();
+    addContextMenuItem(menu, '\uD83D\uDCCB 画像をコピー', async () => {
       try {
-        const blob = await dataUrlToPngBlob(elem.content);
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        flash('画像をコピーしました');
+        await copySelectedImagesAsPng(id);
       } catch (err) {
         flash('コピー失敗: ' + err.message);
         console.error(err);
       }
     });
-    menu.appendChild(copyBtn);
+
+    addContextMenuItem(menu, '📏 画像サイズをコピー', () => copyImageSize(elem));
+    addContextMenuItem(menu, '📐 コピーしたサイズを反映', () => applyCopiedImageSize(id), {
+      disabled: !copiedImageSize
+    });
 
     if (!elem.locked) {
-      const resizeBtn = document.createElement('div');
-      resizeBtn.className = 'context-menu-item';
-      resizeBtn.textContent = '📐 サイズ変更...';
-      resizeBtn.addEventListener('click', () => {
-        hideContextMenu();
-        openResizeModal(elem);
-      });
-      menu.appendChild(resizeBtn);
-
-      const editBtn = document.createElement('div');
-      editBtn.className = 'context-menu-item';
-      editBtn.textContent = '✏️ 編集...';
-      editBtn.addEventListener('click', () => {
-        hideContextMenu();
-        openEditModal(elem);
-      });
-      menu.appendChild(editBtn);
+      addContextMenuItem(menu, '📐 サイズ変更...', () => openResizeModal(elem));
+      addContextMenuItem(menu, '✏️ 編集...', () => openEditModal(elem));
     }
   }
 
   // ロック/アンロック
-  const lockBtn = document.createElement('div');
-  lockBtn.className = 'context-menu-item';
-  lockBtn.textContent = elem.locked ? '\uD83D\uDD13 ロック解除' : '\uD83D\uDD12 ロック';
-  lockBtn.addEventListener('click', () => {
-    hideContextMenu();
-    toggleLock(id);
-  });
-  menu.appendChild(lockBtn);
+  addContextMenuItem(menu, elem.locked ? '\uD83D\uDD13 ロック解除' : '\uD83D\uDD12 ロック', () => toggleLock(id));
 
   // 背景色セクション
   const colorSection = document.createElement('div');
@@ -1583,23 +1848,7 @@ canvasInnerEl.addEventListener('contextmenu', async e => {
   colorSection.appendChild(swatches);
   menu.appendChild(colorSection);
 
-  // メニューの位置をマウスカーソル近くに配置（画面座標）
-  const canvasRect = canvasEl.getBoundingClientRect();
-  menu.style.left = (e.clientX - canvasRect.left) + 'px';
-  menu.style.top  = (e.clientY - canvasRect.top) + 'px';
-  canvasEl.appendChild(menu);
-  activeContextMenu = menu;
-
-  // メニューが画面外にはみ出ないよう調整
-  requestAnimationFrame(() => {
-    const menuRect = menu.getBoundingClientRect();
-    if (menuRect.right > canvasRect.right - 8) {
-      menu.style.left = Math.max(4, (e.clientX - canvasRect.left - menuRect.width)) + 'px';
-    }
-    if (menuRect.bottom > canvasRect.bottom - 8) {
-      menu.style.top = Math.max(4, (e.clientY - canvasRect.top - menuRect.height)) + 'px';
-    }
-  });
+  placeContextMenu(menu, e.clientX, e.clientY);
 });
 
 function setCardColor(id, color) {
@@ -1645,12 +1894,11 @@ function toggleLock(id) {
 
 async function dataUrlToPngBlob(dataUrl) {
   // ClipboardItem は image/png が確実なので canvas で PNG 化する
-  const img = new Image();
-  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+  const img = await loadImage(dataUrl);
   const c = document.createElement('canvas');
   c.width = img.naturalWidth; c.height = img.naturalHeight;
   c.getContext('2d').drawImage(img, 0, 0);
-  return await new Promise(r => c.toBlob(r, 'image/png'));
+  return await canvasToPngBlob(c);
 }
 
 // ── Undo/Redo ボタン ──────────────────────────────────────────────
@@ -1694,19 +1942,7 @@ btnTheme.addEventListener('click', () => {
 
 // ── グリッド切り替え ────────────────────────────────────────────────
 gridPill.addEventListener('click', () => {
-  if (gridSize === 24) {
-    gridSize = 12;
-  } else if (gridSize === 12) {
-    gridSize = 48;
-  } else if (gridSize === 48) {
-    gridSize = 0;
-  } else {
-    gridSize = 24;
-  }
-  config.gridSize = gridSize;
-  applyGridStyle();
-  updateGridPill();
-  dbSaveConfig(config).catch(err => console.error(err));
+  cycleGridSize();
 });
 
 // ── 新規タブ追加 ──────────────────────────────────────────────────
@@ -1908,6 +2144,24 @@ function dl(blob, name) {
   URL.revokeObjectURL(url);
 }
 
+async function buildBackupData() {
+  syncConfigFromView();
+  const backupData = {
+    version: APP_VERSION,
+    config: config,
+    tabElements: {}
+  };
+
+  for (const tab of config.tabs || []) {
+    const tabElements = tab.id === config.activeTabId
+      ? elements
+      : await dbLoad('elements_' + tab.id);
+    backupData.tabElements[tab.id] = Array.isArray(tabElements) ? tabElements : [];
+  }
+  backupData.elements = elements; // 後方互換性のためにアクティブな要素も入れる
+  return backupData;
+}
+
 btnExportTxt.addEventListener('click', () => {
   const lines = elements.filter(e => e.type === 'text' && e.content.trim()).map(e => e.content);
   if (!lines.length) { flash('テキストがありません'); return; }
@@ -1951,7 +2205,7 @@ function sanitizeTheme(value) {
 
 function sanitizeGridSize(value) {
   const n = Number(value);
-  return [0, 12, 24, 48].includes(n) ? n : 24;
+  return GRID_SIZES.includes(n) ? n : 24;
 }
 
 function sanitizeElement(raw, usedIds) {
@@ -2153,19 +2407,8 @@ btnExportJson.addEventListener('click', async () => {
   await flushSaveAsync();
   await saveConfigNow();
 
-  const backupData = {
-    version: APP_VERSION,
-    config: config,
-    tabElements: {}
-  };
-
   try {
-    for (const tab of config.tabs) {
-      const tabElements = await dbLoad('elements_' + tab.id);
-      backupData.tabElements[tab.id] = tabElements;
-    }
-    backupData.elements = elements; // 後方互換性のためにアクティブな要素も入れる
-
+    const backupData = await buildBackupData();
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json;charset=utf-8' });
     dl(blob, `quickmemo_backup_${ts()}.json`);
   } catch (err) {
@@ -2351,13 +2594,52 @@ function flash(text) {
   flashTimer = setTimeout(() => { flashTimer = null; setStatus('', '保存済み'); }, 2000);
 }
 
-function updateInfo() {
+let backupInfoTimer = null;
+let backupInfoSeq = 0;
+let lastBackupSizeLabel = '';
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0KB';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx++;
+  }
+  const digits = idx === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)}${units[idx]}`;
+}
+
+function renderInfo() {
   const t = elements.filter(e => e.type === 'text').length;
   const i = elements.filter(e => e.type === 'image').length;
   const p = [];
   if (t) p.push(`テキスト ${t}`);
   if (i) p.push(`画像 ${i}`);
+  if (lastBackupSizeLabel) p.push(`バックアップ 約${lastBackupSizeLabel}`);
   infoEl.textContent = p.join('　/　');
+}
+
+function scheduleBackupSizeInfoUpdate() {
+  if (!db || !config.tabs?.length) return;
+  const seq = ++backupInfoSeq;
+  clearTimeout(backupInfoTimer);
+  backupInfoTimer = setTimeout(async () => {
+    try {
+      const backupData = await buildBackupData();
+      const json = JSON.stringify(backupData, null, 2);
+      lastBackupSizeLabel = formatBytes(new TextEncoder().encode(json).length);
+      if (seq === backupInfoSeq) renderInfo();
+    } catch (err) {
+      console.error('バックアップ容量の推定に失敗:', err);
+    }
+  }, 500);
+}
+
+function updateInfo() {
+  renderInfo();
+  scheduleBackupSizeInfoUpdate();
   updateMinimap();
 }
 

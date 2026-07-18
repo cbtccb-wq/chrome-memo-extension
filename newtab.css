@@ -6,9 +6,12 @@
 :root {
   --bg:        #f7f7f7;
   --bg-tool:   #ffffff;
+  --bg-canvas-out: #eceff3;
+  --bg-canvas-in:  #fbfbfb;
   --text:      #1a1a1a;
   --text-muted:#999;
   --border:    #e0e0e0;
+  --canvas-border: #b8c1cc;
   --accent:    #4a90d9;
   --accent-bg: rgba(74,144,217,0.1);
   --danger:    #e05252;
@@ -28,9 +31,12 @@
   :root {
     --bg:        #1a1a1a;
     --bg-tool:   #242424;
+    --bg-canvas-out: #111418;
+    --bg-canvas-in:  #202225;
     --text:      #e2e2e2;
     --text-muted:#666;
     --border:    #333;
+    --canvas-border: #4a5563;
     --accent:    #5ba3e8;
     --accent-bg: rgba(91,163,232,0.12);
     --el-bg:     #2a2a2a;
@@ -47,9 +53,12 @@
 html[data-theme="light"] {
   --bg:        #f7f7f7;
   --bg-tool:   #ffffff;
+  --bg-canvas-out: #eceff3;
+  --bg-canvas-in:  #fbfbfb;
   --text:      #1a1a1a;
   --text-muted:#999;
   --border:    #e0e0e0;
+  --canvas-border: #b8c1cc;
   --accent:    #4a90d9;
   --accent-bg: rgba(74,144,217,0.1);
   --danger:    #e05252;
@@ -65,9 +74,12 @@ html[data-theme="light"] {
 html[data-theme="dark"] {
   --bg:        #1a1a1a;
   --bg-tool:   #242424;
+  --bg-canvas-out: #111418;
+  --bg-canvas-in:  #202225;
   --text:      #e2e2e2;
   --text-muted:#666;
   --border:    #333;
+  --canvas-border: #4a5563;
   --accent:    #5ba3e8;
   --accent-bg: rgba(91,163,232,0.12);
   --el-bg:     #2a2a2a;
@@ -82,9 +94,12 @@ html[data-theme="dark"] {
 html[data-theme="sepia"] {
   --bg:        #f5ecd8;
   --bg-tool:   #ebdcb9;
+  --bg-canvas-out: #e5d5b6;
+  --bg-canvas-in:  #fff8ea;
   --text:      #433422;
   --text-muted:#8d7c68;
   --border:    #d5c3a6;
+  --canvas-border: #b69d73;
   --accent:    #8c6239;
   --accent-bg: rgba(140,98,57,0.12);
   --danger:    #c84e4e;
@@ -266,7 +281,7 @@ html, body {
   bottom: 28px;
   overflow: hidden;
   cursor: default;
-  background-color: var(--bg);
+  background-color: var(--bg-canvas-out);
 }
 
 /* パン中・Space 押下中のカーソル */
@@ -283,10 +298,12 @@ html, body {
   width: 5000px;
   height: 5000px;
   transform-origin: 0 0;
-  border: 1px dashed var(--border);
+  border: 2px solid var(--canvas-border);
   box-sizing: border-box;
+  background-color: var(--bg-canvas-in);
   background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
   background-size: 24px 24px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.45), 0 10px 32px rgba(0,0,0,0.10);
 }
 
 .snap-guide {
@@ -530,6 +547,12 @@ html, body {
 .info, .save-status {
   font-size: 11px;
   color: var(--text-muted);
+}
+.info {
+  min-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .save-status.saving { color: var(--accent); }
@@ -850,6 +873,20 @@ html, body {
 .context-menu-item:hover {
   background: var(--accent-bg);
   color: var(--accent);
+}
+.context-menu-item.disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.55;
+}
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
 }
 
 .context-menu-colors {

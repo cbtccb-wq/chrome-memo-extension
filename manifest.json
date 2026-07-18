@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Quick Memo",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "新しいタブを自由配置のメモキャンバスに。テキスト・画像をズーム/パン/複数選択しながら自動保存。",
+  "permissions": [
+    "clipboardRead"
+  ],
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",

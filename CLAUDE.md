@@ -26,15 +26,15 @@
 
 - **配置・編集**: キャンバス上の `mousedown` / `mousemove` / `mouseup` を 1 つのステートマシン（`dragState` / `resizeState` / `marqueeState` / `panState`）で処理。空白部分のダブルクリックでテキストボックス新規作成、テキスト要素のダブルクリックで `contentEditable` の編集モードへ。Ctrl+V とドラッグ＆ドロップは `insertImageFile` 経由で画像挿入され、現在のビューポート（`canvasEl.offsetWidth/scale`）に対して `0.45w / 0.70h` に収まるよう縮小されます。
 - **選択とマーキー**: `selectedIds: Set<string>` + `primaryId`（リサイズハンドルは `.primary` 要素のみ表示）。要素クリックで単独選択、Shift+クリックでトグル追加。空キャンバスをドラッグするとマーキー (`#marquee` div、画面座標で描画) が表示され、リリース時に交差した要素を選択（Shift で既存選択に追加、3px 未満の動きは「空白クリック」扱いで全解除）。`selectEl(id, additive)` / `setPrimary(id)` / `clearSelection()` / `removeElements(ids[])` が選択モデルへの正規アクセス経路。
-- **ドラッグ・リサイズ**: ドラッグは選択中の **全要素** を同じ delta で移動（`dragState.starts: Map<id,{x,y}>` に開始位置を保存し、最終位置の最小座標が 0 を割らないよう全体クランプ）。Shift 押下中は `GRID = 24px`（CSS のドットグリッドと一致）にスナップ。リサイズは `primaryId` のハンドルのみ動作し、Shift+コーナーハンドルで縦横比を固定。
-- **ズーム/パン**: `canvas-inner` ラッパに `transform: translate(tx, ty) scale(scale)` を適用。Ctrl+ホイールでマウス位置を不動点にズーム（`MIN_SCALE=0.25`, `MAX_SCALE=4`）、Space+ドラッグまたは中ボタンドラッグでパン（`panState`、`spaceHeld` フラグで Space の keydown/keyup を追跡、`window.blur` で取りこぼし防止）。すべての画面座標→キャンバス座標変換は `screenToCanvas()` ヘルパに集約。ステータスバーの `#zoom-pill` がズーム率を表示し、クリックで `scale=1, tx=ty=0` にリセット。`tx`/`ty`/`scale` はタブごとに `config` の各タブオブジェクト内に永続化される。
+- **ドラッグ・リサイズ**: ドラッグは選択中の **全要素** を同じ delta で移動（`dragState.starts: Map<id,{x,y}>` に開始位置を保存し、最終位置の最小座標が 0 を割らないよう全体クランプ）。グリッド有効時はドラッグと画像リサイズの動かしている辺がグリッドにスナップし、Shift 押下中はドラッグのスナップ解除、コーナーリサイズの縦横比固定に使う。
+- **ズーム/パン**: `canvas-inner` ラッパに `transform: translate(tx, ty) scale(scale)` を適用。ホイール単独でマウス位置を不動点にズーム（`MIN_SCALE=0.25`, `MAX_SCALE=8`）、Space+ドラッグまたは中ボタンドラッグでパン（`panState`、`spaceHeld` フラグで Space の keydown/keyup を追跡、`window.blur` で取りこぼし防止）。すべての画面座標→キャンバス座標変換は `screenToCanvas()` ヘルパに集約。ステータスバーの `#zoom-pill` がズーム率を表示し、クリックで `scale=1, tx=ty=0` にリセット。`tx`/`ty`/`scale` はタブごとに `config` の各タブオブジェクト内に永続化される。
 - **Undo/Redo**: `history` 配列に `elements` の浅いコピーを最大 50 件保持（画像 data URL の文字列は immutable なので参照共有でメモリ効率◎）。`addElement` / `removeElement(s)` / ドラッグ完了 / リサイズ完了 / 編集完了 / クリア / 矢印キー(500ms デバウンス) のタイミングで `pushHistory()`。`Ctrl+Z` / `Ctrl+Shift+Z` (Ctrl+Y) ショートカットとツールバーボタンの両方で操作可。
 - **自動保存とステータス**: ミューテーションを伴う処理はすべて `scheduleSave()` を呼ぶ — 配列全体を 600ms デバウンスで書き込み。フッターのステータスピルが `saving` / `saved` を表示。一時メッセージは `flash(text)` ヘルパ（2 秒で `保存済み` に戻る）に統一されており、`alert()` は使わない。
 
 ### エクスポートとコピー
 
 - **エクスポート**: TXT は `\n\n---\n\n` でテキスト要素を結合。HTML は `max(x+w)` / `max(y+h)` のサイズで絶対配置の単独 HTML を生成し、画像要素は data URL をそのまま埋め込みます。
-- **画像コピー (右クリック)**: コンテキストメニューの「クリップボードにコピー」から `dataUrlToPngBlob()` 経由で PNG 化し、`navigator.clipboard.write()` で OS クリップボードへ。
+- **画像コピー/サイズ揃え (右クリック)**: コンテキストメニューの「画像をコピー」から PNG 化し、`navigator.clipboard.write()` で OS クリップボードへ。複数画像選択時は選択画像のみを最小外接矩形へ透明背景で合成し、相対位置を保った1枚のPNGとしてコピーする。画像サイズは `copiedImageSize` に一時保持し、単体または複数選択中のロックされていない画像へ反映できる。
 - **要素のコピー&ペースト**: `document` の `copy` / `paste` イベントを使用。`copy` で選択中の全要素を `elementClipboard: Array<elem>` に保存。`paste` の優先順位は **画像 (システムクリップボード) > 内部要素クリップボード**。内部要素ペーストは元の位置から `+20px` ずらして複製し、新しい要素群を選択状態にする。テキスト編集中（`editingId` が真）はどちらも素通し。
 
 ### マルチタブ
@@ -45,6 +45,7 @@
 ### コンテキストメニュー・背景色・ロック
 
 - **カスタムモーダル**: `showConfirm()` / `showPrompt()` で `confirm()` / `prompt()` を置換し、アプリ内モーダルに統一。フェードイン・スライドインアニメーション付き。
+- **空白右クリック**: `canvasEl` の `contextmenu` でブラウザ標準メニューを抑止し、テキスト追加、マウス位置への貼り付け、表示リセット、グリッド切替を出す。画像貼り付けは `navigator.clipboard.read()` を使うため `manifest.json` に `clipboardRead` 権限がある。
 - **背景色**: `CARD_COLORS` プリセット（黄色、緑、青、ピンク、オレンジ、紫、赤）。ダークモード時は `CARD_COLORS_DARK` で自動変換。右クリックコンテキストメニューから選択。
 - **ロック**: `elem.locked` フラグでドラッグ/リサイズ/編集/削除を無効化。ロック中は 🔒 バッジを表示。右クリックメニューからトグル。
 
